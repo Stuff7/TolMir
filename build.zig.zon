@@ -1,0 +1,12 @@
+.{
+    .name = .tolmir,
+    .version = "0.0.0",
+    .fingerprint = 0x1d8dede470e5bab,
+    .minimum_zig_version = "0.15.0-dev.565+8e72a2528",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
