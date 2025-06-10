@@ -1,4 +1,5 @@
 const std = @import("std");
+const State = @import("state.zig");
 const u = @import("utils.zig");
 const c = @cImport({
     @cInclude("archive.h");
@@ -33,7 +34,6 @@ pub fn deinit(self: *Self) void {
 pub fn open(self: *Self, path: []const u8) !void {
     try self.assert(c.archive_read_open_filename(self.archive, path.ptr, 10240));
     self.stem = std.fs.path.stem(path);
-    std.debug.print("{s}\n", .{self.stem});
 }
 
 pub fn nextEntry(self: *Self) ?Entry {
@@ -47,19 +47,18 @@ pub fn skipEntryData(self: Self) void {
 }
 
 pub fn close(self: Self) !void {
-    if (c.archive_read_close(self.archive) != 0)
-        return error.ArchiveClose;
+    try self.assert(c.archive_read_close(self.archive));
 }
 
-pub fn extractToFile(self: Self, allocator: Allocator, entry: Entry) !void {
+pub fn extractToFile(self: Self, state: State, entry: Entry) !void {
     if (entry.fileType() != .regular) return;
 
     const name = entry.pathName();
-    const path = try self.sanitizePath(allocator, name);
-    defer allocator.free(path);
-    if (std.fs.path.dirname(path)) |dir| try std.fs.cwd().makePath(dir);
+    const path = try self.sanitizePath(state.allocator, name);
+    defer state.allocator.free(path);
+    if (std.fs.path.dirname(path)) |dir| try state.cwd.makePath(dir);
 
-    const out = try std.fs.cwd().createFile(path, .{ .truncate = true, .read = false });
+    const out = try state.cwd.createFile(path, .{ .truncate = true, .read = false });
     defer out.close();
 
     const writer = out.writer();
@@ -100,7 +99,7 @@ fn sanitizePath(self: Self, allocator: Allocator, raw_path: []const u8) ![]const
     }
 
     return std.fs.path.join(allocator, &[_][]const u8{
-        "deflated", self.stem, raw_path,
+        u.deflated_dir, self.stem, raw_path,
     });
 }
 

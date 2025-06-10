@@ -4,6 +4,7 @@ curr_dir="$PWD/$(dirname "$BASH_SOURCE")"
 
 cd "$curr_dir/libarchive"
 git clean -xdf && git restore .
+# TODO: Enable LZMA support.
 cmake -S . -B build \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_SHARED_LIBS=OFF \
