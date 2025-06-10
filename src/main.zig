@@ -10,7 +10,7 @@ pub fn main() !void {
     const args = try Args.init(allocator);
     defer args.deinit();
 
-    var xml = try Xml.init(args.file);
+    var xml = try Xml.init(allocator, args.file);
     defer xml.deinit();
 
     if (xml.findElement("description")) |desc| {
