@@ -1,16 +1,15 @@
 #!/bin/bash
 
-curr_dir="$PWD/$(dirname "$BASH_SOURCE")"
+vendor="$PWD/$(dirname "$BASH_SOURCE")"
 
-cd "$curr_dir/libarchive"
+cd "$vendor/libarchive"
 git clean -xdf && git restore .
-# TODO: Enable LZMA support.
 cmake -S . -B build \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_SHARED_LIBS=OFF \
   -DENABLE_WERROR=OFF \
   -DENABLE_OPENSSL=OFF \
-  -DENABLE_LZMA=OFF \
+  -DENABLE_LZMA=ON \
   -DENABLE_LZ4=OFF \
   -DENABLE_ZSTD=OFF \
   -DENABLE_ZLIB=ON \
@@ -22,10 +21,16 @@ cmake -S . -B build \
   -DENABLE_TEST=OFF
 cd build && make
 
-cd "$curr_dir/zlib"
+cd "$vendor/zlib"
 git clean -xdf && git restore .
 cmake -S . -B build.included \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_SHARED_LIBS=OFF \
   -DZLIB_BUILD_EXAMPLES=OFF
 cd build.included && make
+
+cd "$vendor/xz"
+git clean -xdf && git restore .
+./autogen.sh
+./configure --disable-shared
+make

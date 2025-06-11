@@ -9,7 +9,7 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var state = State.init(allocator) catch return;
+    var state = try State.init(allocator);
     defer state.deinit();
 
     switch (state.step) {

@@ -13,27 +13,25 @@ const Self = @This();
 archive: *c.struct_archive,
 stem: []const u8,
 
-pub fn init() !Self {
+pub fn open(path: []const u8, name: []const u8) !Self {
     const a = c.archive_read_new();
     if (a == null) return error.ArchiveReaderInit;
 
-    const reader = Self{ .archive = a.?, .stem = "" };
+    var self = Self{ .archive = a.?, .stem = name };
 
-    if (c.archive_read_support_format_zip(reader.archive) != 0) return error.ZipInit;
-    if (c.archive_read_support_format_rar(reader.archive) != 0) return error.RarInit;
-    if (c.archive_read_support_format_7zip(reader.archive) != 0) return error.Init7z;
-    if (c.archive_read_support_filter_all(reader.archive) != 0) return error.ArchiveFilterInit;
+    if (c.archive_read_support_format_zip(self.archive) != 0) return error.ZipInit;
+    if (c.archive_read_support_format_rar(self.archive) != 0) return error.RarInit;
+    if (c.archive_read_support_format_7zip(self.archive) != 0) return error.Init7z;
+    if (c.archive_read_support_filter_all(self.archive) != 0) return error.ArchiveFilterInit;
 
-    return reader;
-}
-
-pub fn deinit(self: *Self) void {
-    _ = c.archive_read_free(self.archive);
-}
-
-pub fn open(self: *Self, path: []const u8) !void {
     try self.assert(c.archive_read_open_filename(self.archive, path.ptr, 10240));
-    self.stem = std.fs.path.stem(path);
+
+    return self;
+}
+
+pub fn close(self: *Self) !void {
+    try self.assert(c.archive_read_close(self.archive));
+    _ = c.archive_read_free(self.archive);
 }
 
 pub fn nextEntry(self: *Self) ?Entry {
@@ -44,10 +42,6 @@ pub fn nextEntry(self: *Self) ?Entry {
 
 pub fn skipEntryData(self: Self) void {
     _ = c.archive_read_data_skip(self.archive);
-}
-
-pub fn close(self: Self) !void {
-    try self.assert(c.archive_read_close(self.archive));
 }
 
 pub fn extractToFile(self: Self, state: State, entry: Entry) !void {
@@ -64,7 +58,7 @@ pub fn extractToFile(self: Self, state: State, entry: Entry) !void {
     const writer = out.writer();
     var buffer: [8192]u8 = undefined;
 
-    std.debug.print(u.ansi("Deflating:\n  ", "1") ++ u.ansi("{s}\n  ", "1;93") ++ u.ansi("{s}\n", "1;94"), .{ name, path });
+    std.debug.print(u.ansi("  Inflating:\n    ", "1") ++ u.ansi("{s}\n    ", "1;93") ++ u.ansi("{s}\n", "1;94"), .{ name, path });
     while (true) {
         const size = c.archive_read_data(self.archive, &buffer, buffer.len);
         if (size == 0) break;
@@ -99,7 +93,7 @@ fn sanitizePath(self: Self, allocator: Allocator, raw_path: []const u8) ![]const
     }
 
     return std.fs.path.join(allocator, &[_][]const u8{
-        u.deflated_dir, self.stem, raw_path,
+        u.inflated_dir, self.stem, raw_path,
     });
 }
 

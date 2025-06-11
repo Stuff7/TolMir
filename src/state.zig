@@ -1,5 +1,7 @@
 const std = @import("std");
 const u = @import("utils.zig");
+const LoadOrder = @import("loadorder.zig");
+const EspMap = @import("espmap.zig");
 const Archive = @import("archive.zig");
 
 const Allocator = std.mem.Allocator;
@@ -10,6 +12,8 @@ allocator: Allocator,
 step: Step,
 cwd_name: []const u8,
 cwd: std.fs.Dir,
+loadorder: LoadOrder,
+espmap: EspMap,
 
 pub fn init(allocator: Allocator) !Self {
     const args = try std.process.argsAlloc(allocator);
@@ -21,21 +25,42 @@ pub fn init(allocator: Allocator) !Self {
     }
 
     const cwd_name = try allocator.dupe(u8, findOption(args, "dir") orelse "");
+    const cwd = if (cwd_name.len == 0) std.fs.cwd() else try std.fs.cwd().openDir(cwd_name, .{});
     return Self{
         .allocator = allocator,
         .step = try Step.init(args),
         .cwd_name = cwd_name,
-        .cwd = if (cwd_name.len == 0) std.fs.cwd() else try std.fs.cwd().openDir(cwd_name, .{}),
+        .cwd = cwd,
+        .loadorder = try LoadOrder.init(allocator, cwd),
+        .espmap = try EspMap.init(allocator, cwd),
     };
 }
 
-pub fn installMods(self: Self) !void {
-    const mods_dir = try self.cwd.openDir(u.mods_dir, .{ .iterate = true });
+pub fn isModInstalled(self: Self, name: []const u8) bool {
+    const out_path = std.fs.path.join(self.allocator, &[_][]const u8{
+        u.inflated_dir, name,
+    }) catch return false;
+    defer self.allocator.free(out_path);
+
+    const stat = self.cwd.statFile(out_path) catch return false;
+    return stat.kind == .directory;
+}
+
+pub fn installMods(self: *Self) !void {
+    var mods_dir = try self.cwd.openDir(u.mods_dir, .{ .iterate = true });
+    defer mods_dir.close();
     var mods = mods_dir.iterate();
 
     while (try mods.next()) |mod| {
+        const stem = std.fs.path.stem(mod.name);
         if (mod.kind != .file) continue;
 
+        const is_installed = self.isModInstalled(stem);
+        const esp_cached = self.espmap.map.contains(stem);
+
+        if (is_installed and esp_cached) continue;
+
+        std.debug.print(u.ansi("Processing mod: ", "1") ++ u.ansi("{s}\n", "92"), .{mod.name});
         const path = try std.fs.path.join(self.allocator, &[_][]const u8{
             self.cwd_name,
             u.mods_dir,
@@ -43,21 +68,56 @@ pub fn installMods(self: Self) !void {
         });
         defer self.allocator.free(path);
 
-        var reader = try Archive.init();
-        defer reader.deinit();
+        var reader = try Archive.open(path, stem);
+        try self.loadorder.appendMod(stem, true);
 
-        try reader.open(path);
-
+        var has_fomod = false;
+        var has_data = false;
         while (reader.nextEntry()) |entry| {
-            try reader.extractToFile(self, entry);
-        }
+            const name = entry.pathName();
 
+            if (std.mem.eql(u8, name, "fomod/ModConfig.xml")) {
+                has_fomod = true;
+            } else if (std.mem.eql(u8, name, "Data")) {
+                has_data = true;
+            }
+
+            if (!is_installed) try reader.extractToFile(self.*, entry);
+            if (esp_cached) continue;
+            try self.espmap.appendEsp(stem, name);
+        }
         try reader.close();
+
+        if (has_fomod) {
+            // TODO: interactive mod install
+        } else if (has_data) {
+            // TODO: cp inflated/{mod}/* installs/{mod}/
+        } else {
+            // TODO: cp inflated/{mod}/* installs/{mod}/Data/
+        }
+    }
+
+    try self.loadorder.serialize();
+    try self.espmap.serialize();
+    try self.writePluginsTxt();
+}
+
+pub fn writePluginsTxt(self: Self) !void {
+    var plugins = try self.cwd.createFile("Plugins.txt", .{});
+    defer plugins.close();
+    const w = plugins.writer();
+
+    var it = self.loadorder.mods.iterator();
+    while (it.next()) |entry| {
+        if (!entry.value_ptr.*) continue;
+        try std.fmt.format(w, "*{s}\n", .{entry.key_ptr.*});
     }
 }
 
-pub fn deinit(self: Self) void {
+pub fn deinit(self: *Self) void {
     self.allocator.free(self.cwd_name);
+    self.espmap.deinit();
+    self.loadorder.deinit();
 }
 
 fn findOption(args: [][:0]u8, comptime name: []const u8) ?[]const u8 {

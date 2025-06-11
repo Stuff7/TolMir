@@ -2,7 +2,8 @@ const std = @import("std");
 
 const Allocator = std.mem.Allocator;
 
-pub const deflated_dir = "deflated";
+pub const installs_dir = "installs";
+pub const inflated_dir = "inflated";
 pub const mods_dir = "mods";
 
 pub fn ansi(comptime txt: []const u8, comptime styles: []const u8) []const u8 {

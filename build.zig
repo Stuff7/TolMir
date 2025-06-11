@@ -32,9 +32,11 @@ fn addBuild(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.built
     exe.root_module.addIncludePath(.{ .cwd_relative = "vendor/libarchive/libarchive" });
     exe.root_module.addIncludePath(.{ .cwd_relative = "vendor/zlib" });
     exe.root_module.addIncludePath(.{ .cwd_relative = "vendor/mxml" });
+    exe.root_module.addIncludePath(.{ .cwd_relative = "vendor/xz/src/liblzma/lzma" });
 
     exe.addObjectFile(.{ .cwd_relative = "vendor/libarchive/build/libarchive/libarchive.a" });
     exe.addObjectFile(.{ .cwd_relative = "vendor/zlib/build.included/libz.a" });
+    exe.addObjectFile(.{ .cwd_relative = "vendor/xz/src/liblzma/.libs/liblzma.a" });
     exe.addObjectFile(.{ .cwd_relative = "vendor/mxml/libmxml4.a" });
     exe.linkLibC();
 

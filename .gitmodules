@@ -10,3 +10,6 @@
 	path = vendor/mxml
 	url = https://github.com/michaelrsweet/mxml.git
 	ignore = dirty
+[submodule "vendor/xz"]
+	path = vendor/xz
+	url = https://github.com/tukaani-project/xz.git
