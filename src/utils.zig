@@ -134,6 +134,27 @@ pub fn symlinkRecursive(
     }
 }
 
+pub fn symlinkFile(
+    allocator: Allocator,
+    indent: comptime_int,
+    src_path: []const u8,
+    dst_path: []const u8,
+) !void {
+    try fs.cwd().makePath(fs.path.dirname(dst_path) orelse ".");
+
+    const source_absolute = try fs.cwd().realpathAlloc(allocator, src_path);
+    defer allocator.free(source_absolute);
+
+    print(" " ** indent ++ ansi("Symlink:\n", "1") ++
+        " " ** (indent + 2) ++ ansi("{s}\n", "96") ++
+        " " ** (indent + 2) ++ ansi("{s}\n", "92"), .{ source_absolute, dst_path });
+
+    fs.cwd().symLink(source_absolute, dst_path, .{}) catch |err| switch (err) {
+        error.PathAlreadyExists => {},
+        else => return err,
+    };
+}
+
 pub fn sanitizePath(raw_path: []const u8) ![]const u8 {
     if (raw_path.len > 0 and raw_path[0] == '/') {
         return error.AbsolutePathNotAllowed;
@@ -165,4 +186,15 @@ pub fn sanitizePath(raw_path: []const u8) ![]const u8 {
 pub fn dirExists(path: []const u8) bool {
     const stat = fs.cwd().statFile(path) catch return false;
     return stat.kind == .directory;
+}
+
+pub fn initEnum(T: type, input: []const u8, default: anytype) !T {
+    const fields = @typeInfo(T).@"enum".fields;
+    inline for (fields) |f| {
+        if (std.mem.eql(u8, f.name, input)) {
+            return @field(T, f.name);
+        }
+    }
+
+    return default;
 }
