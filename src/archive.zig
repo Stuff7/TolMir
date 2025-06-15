@@ -6,6 +6,7 @@ const c = @cImport({
     @cInclude("archive_entry.h");
 });
 
+const fs = std.fs;
 const Allocator = std.mem.Allocator;
 
 const Self = @This();
@@ -44,57 +45,31 @@ pub fn skipEntryData(self: Self) void {
     _ = c.archive_read_data_skip(self.archive);
 }
 
-pub fn extractToFile(self: Self, state: State, entry: Entry) !void {
+pub fn extractToFile(self: Self, state: State, indent: comptime_int, entry: Entry, base: []const u8) !void {
     if (entry.fileType() != .regular) return;
 
     const name = entry.pathName();
-    const path = try self.sanitizePath(state.allocator, name);
-    defer state.allocator.free(path);
-    if (std.fs.path.dirname(path)) |dir| try state.cwd.makePath(dir);
+    const raw_path = try fs.path.join(state.allocator, &[_][]const u8{ base, name });
+    defer state.allocator.free(raw_path);
+    const path = try u.sanitizePath(raw_path);
 
-    const out = try state.cwd.createFile(path, .{ .truncate = true, .read = false });
+    if (fs.path.dirname(path)) |dir| try fs.cwd().makePath(dir);
+
+    const out = try fs.cwd().createFile(path, .{ .truncate = true, .read = false });
     defer out.close();
 
     const writer = out.writer();
     var buffer: [8192]u8 = undefined;
 
-    std.debug.print(u.ansi("  Inflating:\n    ", "1") ++ u.ansi("{s}\n    ", "1;93") ++ u.ansi("{s}\n", "1;94"), .{ name, path });
+    std.debug.print(" " ** indent ++ u.ansi("Inflating:\n", "1") ++
+        " " ** (indent + 2) ++ u.ansi("{s}\n", "93") ++
+        " " ** (indent + 2) ++ u.ansi("{s}\n", "94"), .{ name, path });
     while (true) {
         const size = c.archive_read_data(self.archive, &buffer, buffer.len);
         if (size == 0) break;
         if (size < 0) return error.ArchiveReadError;
         try writer.writeAll(buffer[0..@intCast(size)]);
     }
-}
-
-fn sanitizePath(self: Self, allocator: Allocator, raw_path: []const u8) ![]const u8 {
-    if (raw_path.len > 0 and raw_path[0] == '/') {
-        return error.AbsolutePathNotAllowed;
-    }
-
-    if (raw_path.len == 0) {
-        return error.EmptyPathNotAllowed;
-    }
-
-    var it = std.mem.tokenizeScalar(u8, raw_path, '/');
-    while (it.next()) |part| {
-        if (std.mem.eql(u8, part, "..")) {
-            return error.PathTraversalDetected;
-        }
-        if (std.mem.eql(u8, part, ".")) {
-            return error.RelativePathComponent;
-        }
-        if (part.len == 0) {
-            return error.MalformedPath;
-        }
-        if (part[0] == '.') {
-            return error.HiddenDotfileBlocked;
-        }
-    }
-
-    return std.fs.path.join(allocator, &[_][]const u8{
-        u.inflated_dir, self.stem, raw_path,
-    });
 }
 
 fn assert(self: Self, err: c_int) !void {

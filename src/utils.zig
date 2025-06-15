@@ -1,6 +1,9 @@
 const std = @import("std");
+const State = @import("state.zig");
 
 const Allocator = std.mem.Allocator;
+const print = std.debug.print;
+const fs = std.fs;
 
 pub const installs_dir = "installs";
 pub const inflated_dir = "inflated";
@@ -78,4 +81,88 @@ pub fn stripInitialXmlComments(xml: []const u8) []const u8 {
     }
 
     return xml[pos..];
+}
+
+pub fn symlinkRecursive(
+    allocator: Allocator,
+    indent: comptime_int,
+    src_path: []const u8,
+    dst_path: []const u8,
+) !void {
+    try fs.cwd().makePath(src_path);
+
+    var source_dir = try fs.cwd().openDir(src_path, .{ .iterate = true });
+    defer source_dir.close();
+
+    try fs.cwd().makePath(dst_path);
+
+    var dest_dir = try fs.cwd().openDir(dst_path, .{});
+    defer dest_dir.close();
+
+    var walker = try source_dir.walk(allocator);
+    defer walker.deinit();
+
+    while (try walker.next()) |entry| {
+        const source_full_path = try fs.path.join(allocator, &[_][]const u8{ src_path, entry.path });
+        defer allocator.free(source_full_path);
+
+        const dest_full_path = try fs.path.join(allocator, &[_][]const u8{ dst_path, entry.path });
+        defer allocator.free(dest_full_path);
+
+        switch (entry.kind) {
+            .file => {
+                print(" " ** indent ++ ansi("Symlink:\n", "1") ++
+                    " " ** (indent + 2) ++ ansi("{s}\n", "96") ++
+                    " " ** (indent + 2) ++ ansi("{s}\n", "92"), .{ source_full_path, dest_full_path });
+
+                const source_absolute = try fs.cwd().realpathAlloc(allocator, source_full_path);
+                defer allocator.free(source_absolute);
+
+                fs.cwd().symLink(source_absolute, dest_full_path, .{}) catch |err| switch (err) {
+                    error.PathAlreadyExists => {},
+                    else => return err,
+                };
+            },
+            .directory => {
+                fs.cwd().makePath(dest_full_path) catch |err| switch (err) {
+                    error.PathAlreadyExists => {},
+                    else => return err,
+                };
+            },
+            else => {},
+        }
+    }
+}
+
+pub fn sanitizePath(raw_path: []const u8) ![]const u8 {
+    if (raw_path.len > 0 and raw_path[0] == '/') {
+        return error.AbsolutePathNotAllowed;
+    }
+
+    if (raw_path.len == 0) {
+        return error.EmptyPathNotAllowed;
+    }
+
+    var it = std.mem.tokenizeScalar(u8, raw_path, '/');
+    while (it.next()) |part| {
+        if (std.mem.eql(u8, part, "..")) {
+            return error.PathTraversalDetected;
+        }
+        if (std.mem.eql(u8, part, ".")) {
+            return error.RelativePathComponent;
+        }
+        if (part.len == 0) {
+            return error.MalformedPath;
+        }
+        if (part[0] == '.') {
+            return error.HiddenDotfileBlocked;
+        }
+    }
+
+    return raw_path;
+}
+
+pub fn dirExists(path: []const u8) bool {
+    const stat = fs.cwd().statFile(path) catch return false;
+    return stat.kind == .directory;
 }

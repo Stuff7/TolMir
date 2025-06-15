@@ -4,6 +4,7 @@ const LoadOrder = @import("loadorder.zig");
 const EspMap = @import("espmap.zig");
 const Archive = @import("archive.zig");
 
+const fs = std.fs;
 const Allocator = std.mem.Allocator;
 
 const Self = @This();
@@ -11,7 +12,7 @@ const Self = @This();
 allocator: Allocator,
 step: Step,
 cwd_name: []const u8,
-cwd: std.fs.Dir,
+cwd: fs.Dir,
 loadorder: LoadOrder,
 espmap: EspMap,
 
@@ -25,7 +26,7 @@ pub fn init(allocator: Allocator) !Self {
     }
 
     const cwd_name = try allocator.dupe(u8, findOption(args, "dir") orelse "");
-    const cwd = if (cwd_name.len == 0) std.fs.cwd() else try std.fs.cwd().openDir(cwd_name, .{});
+    const cwd = if (cwd_name.len == 0) fs.cwd() else try fs.cwd().openDir(cwd_name, .{});
     return Self{
         .allocator = allocator,
         .step = try Step.init(args),
@@ -36,64 +37,60 @@ pub fn init(allocator: Allocator) !Self {
     };
 }
 
-pub fn isModInstalled(self: Self, name: []const u8) bool {
-    const out_path = std.fs.path.join(self.allocator, &[_][]const u8{
-        u.inflated_dir, name,
-    }) catch return false;
-    defer self.allocator.free(out_path);
-
-    const stat = self.cwd.statFile(out_path) catch return false;
-    return stat.kind == .directory;
-}
-
 pub fn installMods(self: *Self) !void {
     var mods_dir = try self.cwd.openDir(u.mods_dir, .{ .iterate = true });
     defer mods_dir.close();
     var mods = mods_dir.iterate();
 
     while (try mods.next()) |mod| {
-        const stem = std.fs.path.stem(mod.name);
+        const stem = fs.path.stem(mod.name);
         if (mod.kind != .file) continue;
 
-        const is_installed = self.isModInstalled(stem);
         const esp_cached = self.espmap.map.contains(stem);
 
-        if (is_installed and esp_cached) continue;
+        const in_path = try self.join(.{ u.mods_dir, mod.name });
+        defer self.allocator.free(in_path);
 
-        std.debug.print(u.ansi("Processing mod: ", "1") ++ u.ansi("{s}\n", "92"), .{mod.name});
-        const path = try std.fs.path.join(self.allocator, &[_][]const u8{
-            self.cwd_name,
-            u.mods_dir,
-            mod.name,
-        });
-        defer self.allocator.free(path);
-
-        var reader = try Archive.open(path, stem);
-        try self.loadorder.appendMod(stem, true);
+        const out_path = try self.join(.{ u.inflated_dir, stem });
+        defer self.allocator.free(out_path);
+        const is_inflated = u.dirExists(out_path);
 
         var has_fomod = false;
         var has_data = false;
-        while (reader.nextEntry()) |entry| {
-            const name = entry.pathName();
 
-            if (std.mem.eql(u8, name, "fomod/ModConfig.xml")) {
-                has_fomod = true;
-            } else if (std.mem.eql(u8, name, "Data")) {
-                has_data = true;
+        if (!is_inflated or !esp_cached) {
+            std.debug.print(u.ansi("Processing mod: ", "1") ++ u.ansi("{s}\n", "92"), .{out_path});
+            var reader = try Archive.open(in_path, stem);
+            try self.loadorder.appendMod(stem, true);
+            while (reader.nextEntry()) |entry| {
+                const name = entry.pathName();
+
+                if (std.mem.eql(u8, name, "fomod/ModConfig.xml")) {
+                    has_fomod = true;
+                } else if (std.mem.eql(u8, name, "Data")) {
+                    has_data = true;
+                }
+
+                if (!is_inflated) try reader.extractToFile(self.*, 2, entry, out_path);
+                if (esp_cached) continue;
+                try self.espmap.appendEsp(stem, name);
             }
-
-            if (!is_installed) try reader.extractToFile(self.*, entry);
-            if (esp_cached) continue;
-            try self.espmap.appendEsp(stem, name);
+            try reader.close();
         }
-        try reader.close();
 
+        const install_path = if (has_fomod or has_data)
+            try self.join(.{ u.installs_dir, stem })
+        else
+            try self.join(.{ u.installs_dir, stem, "Data" });
+        defer self.allocator.free(install_path);
+
+        if (u.dirExists(install_path)) return;
+
+        std.debug.print(u.ansi("Installing mod: ", "1") ++ u.ansi("{s}\n", "92"), .{install_path});
         if (has_fomod) {
             // TODO: interactive mod install
-        } else if (has_data) {
-            // TODO: cp inflated/{mod}/* installs/{mod}/
         } else {
-            // TODO: cp inflated/{mod}/* installs/{mod}/Data/
+            try u.symlinkRecursive(self.allocator, 2, out_path, install_path);
         }
     }
 
@@ -141,6 +138,15 @@ fn showUsage(args: [][:0]u8) void {
         "\n", .{
         args[0],
     });
+}
+
+fn join(self: Self, paths: anytype) ![]const u8 {
+    var ps: [paths.len + 1][]const u8 = undefined;
+    ps[0] = self.cwd_name;
+    inline for (paths, 1..) |p, i| {
+        ps[i] = p;
+    }
+    return fs.path.join(self.allocator, &ps);
 }
 
 const Step = enum {
