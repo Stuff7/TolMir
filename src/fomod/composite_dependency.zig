@@ -45,12 +45,12 @@ pub fn addNested(self: *CompositeDependency, nested: *CompositeDependency) !void
     try self.dependencies.append(.{ .Nested = nested });
 }
 
-const Operator = enum {
+pub const Operator = enum {
     And,
     Or,
 };
 
-const FileState = enum {
+pub const FileState = enum {
     Missing,
     Inactive,
     Active,

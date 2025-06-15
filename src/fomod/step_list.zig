@@ -27,13 +27,13 @@ pub fn deinit(self: *StepList) void {
     self.steps.deinit();
 }
 
-const OrderEnum = enum {
+pub const OrderEnum = enum {
     Ascending,
     Descending,
     Explicit,
 };
 
-const GroupType = enum {
+pub const GroupType = enum {
     SelectAtLeastOne,
     SelectAtMostOne,
     SelectExactlyOne,
@@ -41,13 +41,13 @@ const GroupType = enum {
     SelectAny,
 };
 
-const Group = struct {
+pub const Group = struct {
     name: []const u8,
     group_type: GroupType,
     plugins: PluginList,
 };
 
-const GroupList = struct {
+pub const GroupList = struct {
     groups: std.ArrayList(Group),
     order: OrderEnum = .Ascending,
     allocator: Allocator,
@@ -67,13 +67,13 @@ const GroupList = struct {
     }
 };
 
-const InstallStep = struct {
+pub const InstallStep = struct {
     name: []const u8,
     visible: ?CompositeDependency,
     optional_file_groups: GroupList,
 };
 
-const PluginTypeEnum = enum {
+pub const PluginTypeEnum = enum {
     Required,
     Optional,
     Recommended,
@@ -85,12 +85,12 @@ const PluginType = struct {
     name: PluginTypeEnum,
 };
 
-const DependencyPattern = struct {
+pub const DependencyPattern = struct {
     dependencies: CompositeDependency,
     plugin_type: PluginType,
 };
 
-const DependencyPatternList = struct {
+pub const DependencyPatternList = struct {
     patterns: std.ArrayList(DependencyPattern),
     allocator: Allocator,
 
@@ -106,22 +106,22 @@ const DependencyPatternList = struct {
     }
 };
 
-const DependencyPluginType = struct {
+pub const DependencyPluginType = struct {
     default_type: PluginType,
     patterns: DependencyPatternList,
 };
 
-const PluginTypeDescriptor = union(enum) {
+pub const PluginTypeDescriptor = union(enum) {
     dependency_type: DependencyPluginType,
     simple_type: PluginType,
 };
 
-const SetConditionFlag = struct {
+pub const SetConditionFlag = struct {
     name: []const u8,
     value: []const u8,
 };
 
-const ConditionFlagList = struct {
+pub const ConditionFlagList = struct {
     flags: std.ArrayList(SetConditionFlag),
     allocator: Allocator,
 
@@ -141,7 +141,7 @@ const PluginImage = struct {
     path: []const u8,
 };
 
-const Plugin = struct {
+pub const Plugin = struct {
     name: []const u8,
     description: []const u8,
     image: ?PluginImage = null,

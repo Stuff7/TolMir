@@ -29,19 +29,19 @@ pub fn deinit(self: *Config) void {
     }
 }
 
-const ModuleTitlePosition = enum {
+pub const ModuleTitlePosition = enum {
     Left,
     Right,
     RightOfImage,
 };
 
-const ModuleTitle = struct {
+pub const ModuleTitle = struct {
     text: []const u8,
     position: ModuleTitlePosition = .Left,
     colour: []const u8 = "000000",
 };
 
-const HeaderImage = struct {
+pub const HeaderImage = struct {
     path: ?[]const u8 = null,
     show_image: bool = true,
     show_fade: bool = true,

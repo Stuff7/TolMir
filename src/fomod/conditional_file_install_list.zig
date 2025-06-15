@@ -17,12 +17,12 @@ pub fn deinit(self: *ConditionalFileInstallList) void {
     self.patterns.deinit();
 }
 
-const ConditionalInstallPattern = struct {
+pub const ConditionalInstallPattern = struct {
     dependencies: CompositeDependency,
     files: FileList,
 };
 
-const ConditionalInstallPatternList = struct {
+pub const ConditionalInstallPatternList = struct {
     patterns: std.ArrayList(ConditionalInstallPattern),
     allocator: Allocator,
 

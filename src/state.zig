@@ -1,5 +1,6 @@
 const std = @import("std");
 const u = @import("utils.zig");
+const FomodParser = @import("fomod/parser.zig");
 const LoadOrder = @import("loadorder.zig");
 const EspMap = @import("espmap.zig");
 const Archive = @import("archive.zig");
@@ -65,7 +66,7 @@ pub fn installMods(self: *Self) !void {
             while (reader.nextEntry()) |entry| {
                 const name = entry.pathName();
 
-                if (std.mem.eql(u8, name, "fomod/ModConfig.xml")) {
+                if (std.mem.eql(u8, name, "fomod/ModuleConfig.xml")) {
                     has_fomod = true;
                 } else if (std.mem.eql(u8, name, "Data")) {
                     has_data = true;
@@ -88,7 +89,11 @@ pub fn installMods(self: *Self) !void {
 
         std.debug.print(u.ansi("Installing mod: ", "1") ++ u.ansi("{s}\n", "92"), .{install_path});
         if (has_fomod) {
-            // TODO: interactive mod install
+            const fomod_path = try fs.path.join(
+                self.allocator,
+                &[_][]const u8{ out_path, "fomod", "ModuleConfig.xml" },
+            );
+            std.debug.print("{?}\n", .{try FomodParser.parseConfig(self.allocator, fomod_path)});
         } else {
             try u.symlinkRecursive(self.allocator, 2, out_path, install_path);
         }

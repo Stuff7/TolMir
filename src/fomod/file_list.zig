@@ -25,7 +25,7 @@ pub fn addFolder(self: *FileList, source: []const u8, system: SystemItemAttribut
     try self.items.append(.{ .Folder = FolderType{ .source = source, .system = system } });
 }
 
-const SystemItemAttributes = struct {
+pub const SystemItemAttributes = struct {
     destination: ?[]const u8 = null,
     always_install: bool = false,
     install_if_usable: bool = false,
