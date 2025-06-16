@@ -11,11 +11,10 @@ const Allocator = std.mem.Allocator;
 
 pub fn parseConfig(allocator: Allocator, xml_path: []const u8) !Config {
     const doc = try xml.init(allocator, xml_path);
-    defer doc.deinit();
 
     // if (doc.findElement("config") == null) return error.NoConfigElement;
 
-    var config = Config{ .module_name = undefined };
+    var config = Config{ .doc = doc, .module_name = undefined };
 
     if (doc.findElement("moduleName")) |module_name_node| {
         config.module_name = try parseModuleTitle(module_name_node);

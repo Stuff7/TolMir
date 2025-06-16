@@ -70,7 +70,7 @@ const VersionDependency = struct {
     version: []const u8,
 };
 
-const DependencyType = union(enum) {
+pub const DependencyType = union(enum) {
     File: FileDependency,
     Flag: FlagDependency,
     Game: VersionDependency,

@@ -1,4 +1,5 @@
 const std = @import("std");
+const Xml = @import("../xml.zig");
 const CompositeDependency = @import("composite_dependency.zig");
 const FileList = @import("file_list.zig");
 const StepList = @import("step_list.zig");
@@ -7,6 +8,7 @@ const Allocator = std.mem.Allocator;
 
 const Config = @This();
 
+doc: Xml,
 module_name: ModuleTitle,
 module_image: ?HeaderImage = null,
 module_dependencies: ?CompositeDependency = null,
@@ -27,6 +29,7 @@ pub fn deinit(self: *Config) void {
     if (self.conditional_file_installs) |*cfi| {
         cfi.deinit();
     }
+    self.doc.deinit();
 }
 
 pub const ModuleTitlePosition = enum {

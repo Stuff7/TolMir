@@ -20,7 +20,7 @@ pub fn deinit(self: *StepList) void {
     for (self.steps.items) |*step| {
         if (step.visible) |*dep| {
             dep.deinit();
-            step.allocator.destroy(dep);
+            self.allocator.destroy(dep);
         }
         step.optional_file_groups.deinit();
     }
