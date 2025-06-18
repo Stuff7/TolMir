@@ -6,7 +6,7 @@ const FileList = @import("file_list.zig");
 const StepList = @This();
 
 steps: std.ArrayList(InstallStep),
-order: OrderEnum = .Ascending,
+order: OrderEnum = .Explicit,
 allocator: Allocator,
 
 pub fn init(allocator: Allocator) StepList {
@@ -16,11 +16,10 @@ pub fn init(allocator: Allocator) StepList {
     };
 }
 
-pub fn deinit(self: *StepList) void {
-    for (self.steps.items) |*step| {
-        if (step.visible) |*dep| {
+pub fn deinit(self: StepList) void {
+    for (self.steps.items) |step| {
+        if (step.visible) |dep| {
             dep.deinit();
-            self.allocator.destroy(dep);
         }
         step.optional_file_groups.deinit();
     }
@@ -49,7 +48,7 @@ pub const Group = struct {
 
 pub const GroupList = struct {
     groups: std.ArrayList(Group),
-    order: OrderEnum = .Ascending,
+    order: OrderEnum = .Explicit,
     allocator: Allocator,
 
     pub fn init(allocator: Allocator) GroupList {
@@ -59,7 +58,7 @@ pub const GroupList = struct {
         };
     }
 
-    pub fn deinit(self: *GroupList) void {
+    pub fn deinit(self: GroupList) void {
         for (self.groups.items) |*group| {
             group.plugins.deinit();
         }
@@ -79,6 +78,16 @@ pub const PluginTypeEnum = enum {
     Recommended,
     NotUsable,
     CouldBeUsable,
+
+    pub fn marker(self: PluginTypeEnum) []const u8 {
+        return switch (self) {
+            .Required => "🔒",
+            .Optional => "🧩",
+            .Recommended => "⭐",
+            .NotUsable => "🚫",
+            .CouldBeUsable => "🤷",
+        };
+    }
 };
 
 const PluginType = struct {
@@ -152,7 +161,7 @@ pub const Plugin = struct {
 
 pub const PluginList = struct {
     plugins: std.ArrayList(Plugin),
-    order: OrderEnum = .Ascending,
+    order: OrderEnum = .Explicit,
     allocator: Allocator,
 
     pub fn init(allocator: Allocator) PluginList {
@@ -164,7 +173,8 @@ pub const PluginList = struct {
 
     pub fn deinit(self: *PluginList) void {
         for (self.plugins.items) |*plugin| {
-            if (plugin.files) |*f| f.deinit();
+            if (plugin.image) |img| self.allocator.free(img.path);
+            if (plugin.files) |f| f.deinit();
             if (plugin.condition_flags) |*c| c.deinit();
         }
         self.plugins.deinit();

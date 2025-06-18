@@ -16,17 +16,20 @@ required_install_files: ?FileList = null,
 install_steps: ?StepList = null,
 conditional_file_installs: ?ConditionalFileInstallList = null,
 
-pub fn deinit(self: *Config) void {
-    if (self.module_dependencies) |*dep| {
+pub fn deinit(self: Config) void {
+    if (self.module_image) |img| {
+        img.deinit();
+    }
+    if (self.module_dependencies) |dep| {
         dep.deinit();
     }
-    if (self.required_install_files) |*fl| {
+    if (self.required_install_files) |fl| {
         fl.deinit();
     }
-    if (self.install_steps) |*steps| {
+    if (self.install_steps) |steps| {
         steps.deinit();
     }
-    if (self.conditional_file_installs) |*cfi| {
+    if (self.conditional_file_installs) |cfi| {
         cfi.deinit();
     }
     self.doc.deinit();
@@ -45,8 +48,14 @@ pub const ModuleTitle = struct {
 };
 
 pub const HeaderImage = struct {
+    allocator: Allocator,
     path: ?[]const u8 = null,
     show_image: bool = true,
     show_fade: bool = true,
     height: i32 = -1,
+
+    fn deinit(self: HeaderImage) void {
+        if (self.path) |path|
+            self.allocator.free(path);
+    }
 };

@@ -13,7 +13,7 @@ pub fn init(allocator: Allocator) ConditionalFileInstallList {
     };
 }
 
-pub fn deinit(self: *ConditionalFileInstallList) void {
+pub fn deinit(self: ConditionalFileInstallList) void {
     self.patterns.deinit();
 }
 
@@ -33,8 +33,8 @@ pub const ConditionalInstallPatternList = struct {
         };
     }
 
-    pub fn deinit(self: *ConditionalInstallPatternList) void {
-        for (self.patterns.items) |*pattern| {
+    pub fn deinit(self: ConditionalInstallPatternList) void {
+        for (self.patterns.items) |pattern| {
             pattern.dependencies.deinit();
             pattern.files.deinit();
         }

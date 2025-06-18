@@ -15,12 +15,9 @@ pub fn init(allocator: Allocator) CompositeDependency {
     };
 }
 
-pub fn deinit(self: *CompositeDependency) void {
+pub fn deinit(self: CompositeDependency) void {
     for (self.dependencies.items) |dep| {
-        if (dep == .Nested) {
-            dep.Nested.deinit();
-            self.allocator.destroy(dep.Nested);
-        }
+        if (dep == .Nested) dep.Nested.deinit();
     }
     self.dependencies.deinit();
 }
@@ -41,7 +38,7 @@ pub fn addFommVersion(self: *CompositeDependency, version: []const u8) !void {
     try self.dependencies.append(.{ .Fomm = VersionDependency{ .version = version } });
 }
 
-pub fn addNested(self: *CompositeDependency, nested: *CompositeDependency) !void {
+pub fn addNested(self: *CompositeDependency, nested: CompositeDependency) !void {
     try self.dependencies.append(.{ .Nested = nested });
 }
 
@@ -75,5 +72,5 @@ pub const DependencyType = union(enum) {
     Flag: FlagDependency,
     Game: VersionDependency,
     Fomm: VersionDependency,
-    Nested: *CompositeDependency,
+    Nested: CompositeDependency,
 };

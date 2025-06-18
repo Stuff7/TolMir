@@ -13,6 +13,62 @@ pub fn ansi(comptime txt: []const u8, comptime styles: []const u8) []const u8 {
     return "\x1b[" ++ styles ++ "m" ++ txt ++ "\x1b[0m";
 }
 
+pub fn replacePathSep(allocator: Allocator, source: []const u8) ![]const u8 {
+    return try std.mem.replaceOwned(u8, allocator, source, "\\", "/");
+}
+
+pub fn renderImage1337(path: []const u8, width: []const u8) !void {
+    const allocator = std.heap.page_allocator;
+
+    var file = try std.fs.cwd().openFile(path, .{});
+    defer file.close();
+
+    const file_size = try file.getEndPos();
+    const file_data = try allocator.alloc(u8, file_size);
+    defer allocator.free(file_data);
+
+    _ = try file.readAll(file_data);
+
+    const base64_len = std.base64.standard.Encoder.calcSize(file_size);
+    const base64_data = try allocator.alloc(u8, base64_len);
+    defer allocator.free(base64_data);
+
+    const data = std.base64.standard.Encoder.encode(base64_data, file_data);
+
+    const ESC = "\x1b";
+    const BEL = "\x07";
+
+    const stdout = std.io.getStdOut().writer();
+
+    try stdout.print(
+        "{s}]1337;File=name={s};width={s};preserveAspectRatio=0;inline=1:{s}{s}",
+        .{ ESC, path, width, data, BEL },
+    );
+}
+
+pub fn trimWhitespace(s: []const u8) []const u8 {
+    var start: usize = 0;
+    var end: usize = s.len;
+
+    while (start < end and std.ascii.isWhitespace(s[start])) : (start += 1) {}
+    while (end > start and std.ascii.isWhitespace(s[end - 1])) : (end -= 1) {}
+
+    return s[start..end];
+}
+
+pub fn scanUsize() !usize {
+    const stdin = std.io.getStdIn().reader();
+    var bufreader = std.io.bufferedReader(stdin);
+    var reader = bufreader.reader();
+
+    var buf: [32]u8 = undefined;
+    const line = try reader.readUntilDelimiterOrEof(&buf, '\n') orelse "";
+
+    const trimmed = std.mem.trim(u8, line, " \t\r\n");
+    if (trimmed.len == 0) return error.EndOfStream;
+    return try std.fmt.parseInt(usize, trimmed, 10);
+}
+
 /// Caller needs to check if a free is necessary on their end.
 pub fn utf16ToUtf8(allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
     if (input.len < 2 or input[0] != 0xFF or input[1] != 0xFE) {

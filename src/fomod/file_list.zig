@@ -1,4 +1,5 @@
 const std = @import("std");
+const u = @import("../utils.zig");
 const Allocator = std.mem.Allocator;
 
 const FileList = @This();
@@ -13,16 +14,23 @@ pub fn init(allocator: Allocator) FileList {
     };
 }
 
-pub fn deinit(self: *FileList) void {
+pub fn deinit(self: FileList) void {
+    for (self.items.items) |f| f.deinit(self.allocator);
     self.items.deinit();
 }
 
 pub fn addFile(self: *FileList, source: []const u8, system: SystemItemAttributes) !void {
-    try self.items.append(.{ .File = FileType{ .source = source, .system = system } });
+    try self.items.append(.{ .File = FileType{
+        .source = try u.replacePathSep(self.allocator, source),
+        .system = system,
+    } });
 }
 
 pub fn addFolder(self: *FileList, source: []const u8, system: SystemItemAttributes) !void {
-    try self.items.append(.{ .Folder = FolderType{ .source = source, .system = system } });
+    try self.items.append(.{ .Folder = FolderType{
+        .source = try u.replacePathSep(self.allocator, source),
+        .system = system,
+    } });
 }
 
 pub const SystemItemAttributes = struct {
@@ -45,4 +53,20 @@ const FolderType = struct {
 const FileListItem = union(enum) {
     File: FileType,
     Folder: FolderType,
+
+    fn deinit(self: FileListItem, allocator: Allocator) void {
+        switch (self) {
+            .File => |f| allocator.free(f.source),
+            .Folder => |f| allocator.free(f.source),
+        }
+
+        const dest = switch (self) {
+            .File => |f| f.system.destination,
+            .Folder => |f| f.system.destination,
+        };
+
+        if (dest) |destination| {
+            allocator.free(destination);
+        }
+    }
 };

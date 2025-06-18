@@ -1,6 +1,6 @@
 const std = @import("std");
 const u = @import("utils.zig");
-const FomodParser = @import("fomod/parser.zig");
+const Fomod = @import("fomod/walker.zig");
 const LoadOrder = @import("loadorder.zig");
 const EspMap = @import("espmap.zig");
 const Archive = @import("archive.zig");
@@ -93,7 +93,11 @@ pub fn installMods(self: *Self) !void {
                 self.allocator,
                 &[_][]const u8{ out_path, "fomod", "ModuleConfig.xml" },
             );
-            std.debug.print("{?}\n", .{try FomodParser.parseConfig(self.allocator, fomod_path)});
+            defer self.allocator.free(fomod_path);
+
+            var fomod = try Fomod.init(self.allocator, fomod_path, out_path);
+            defer fomod.deinit();
+            try fomod.runInstaller();
         } else {
             try u.symlinkRecursive(self.allocator, 2, out_path, install_path);
         }

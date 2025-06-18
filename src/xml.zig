@@ -50,10 +50,10 @@ pub fn deinit(self: Self) void {
 pub const Node = struct {
     node: *c.mxml_node_t,
 
-    pub fn getText(self: @This()) ?[:0]const u8 {
+    pub fn getText(self: @This()) ?[]const u8 {
         const text = c.mxmlGetOpaque(self.node);
         if (text == null) return null;
-        return std.mem.span(text);
+        return u.trimWhitespace(std.mem.span(text));
     }
 
     pub fn getAttribute(self: @This(), attribute: []const u8) ?[]const u8 {

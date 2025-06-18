@@ -12,7 +12,8 @@ const Allocator = std.mem.Allocator;
 pub fn parseConfig(allocator: Allocator, xml_path: []const u8) !Config {
     const doc = try xml.init(allocator, xml_path);
 
-    // if (doc.findElement("config") == null) return error.NoConfigElement;
+    if (!std.mem.eql(u8, doc.root.getElement() orelse "", "config"))
+        return error.NoConfigElement;
 
     var config = Config{ .doc = doc, .module_name = undefined };
 
@@ -23,7 +24,7 @@ pub fn parseConfig(allocator: Allocator, xml_path: []const u8) !Config {
     }
 
     if (doc.findElement("moduleImage")) |module_image_node| {
-        config.module_image = try parseHeaderImage(module_image_node);
+        config.module_image = try parseHeaderImage(allocator, module_image_node);
     }
 
     if (doc.findElement("moduleDependencies")) |deps_node| {
@@ -65,11 +66,11 @@ fn parseModuleTitle(node: xml.Node) !Config.ModuleTitle {
     return title;
 }
 
-fn parseHeaderImage(node: xml.Node) !Config.HeaderImage {
-    var image = Config.HeaderImage{};
+fn parseHeaderImage(allocator: Allocator, node: xml.Node) !Config.HeaderImage {
+    var image = Config.HeaderImage{ .allocator = allocator };
 
     if (node.getAttribute("path")) |path_attr| {
-        image.path = path_attr;
+        image.path = try u.replacePathSep(allocator, path_attr);
     }
 
     if (node.getAttribute("showImage")) |show_attr| {
@@ -111,9 +112,7 @@ fn parseCompositeDependency(allocator: Allocator, node: xml.Node) !CompositeDepe
             } else if (std.mem.eql(u8, element_name, "fommDependency")) {
                 try parseFommDependency(&dep, child);
             } else if (std.mem.eql(u8, element_name, "dependencies")) {
-                const nested = try allocator.create(CompositeDependency);
-                nested.* = try parseCompositeDependency(allocator, child);
-                try dep.addNested(nested);
+                try dep.addNested(try parseCompositeDependency(allocator, child));
             }
         }
         maybe_child = child.getNextSibling();
@@ -177,7 +176,7 @@ fn parseFileItem(file_list: *FileList, node: xml.Node, is_file: bool) !void {
     var system = FileList.SystemItemAttributes{};
 
     if (node.getAttribute("destination")) |dest_attr| {
-        system.destination = dest_attr;
+        system.destination = try std.fs.path.join(file_list.allocator, &[_][]const u8{ "Data", dest_attr });
     }
 
     if (node.getAttribute("alwaysInstall")) |always_attr| {
@@ -203,7 +202,7 @@ fn parseStepList(allocator: Allocator, node: xml.Node) !StepList {
     var step_list = StepList.init(allocator);
 
     if (node.getAttribute("order")) |order_attr| {
-        step_list.order = try u.initEnum(StepList.OrderEnum, order_attr, .Ascending);
+        step_list.order = try u.initEnum(StepList.OrderEnum, order_attr, .Explicit);
     }
 
     var maybe_child = node.getFirstChild();
@@ -243,9 +242,7 @@ fn parseInstallStep(allocator: Allocator, node: xml.Node) !StepList.InstallStep 
             };
 
             if (std.mem.eql(u8, element_name, "visible")) {
-                const visible_dep = try allocator.create(CompositeDependency);
-                visible_dep.* = try parseCompositeDependency(allocator, child);
-                step.visible = visible_dep.*;
+                step.visible = try parseCompositeDependency(allocator, child);
             } else if (std.mem.eql(u8, element_name, "optionalFileGroups")) {
                 step.optional_file_groups = try parseGroupList(allocator, child);
             }
@@ -260,7 +257,7 @@ fn parseGroupList(allocator: Allocator, node: xml.Node) !StepList.GroupList {
     var group_list = StepList.GroupList.init(allocator);
 
     if (node.getAttribute("order")) |order_attr| {
-        group_list.order = try u.initEnum(StepList.OrderEnum, order_attr, .Ascending);
+        group_list.order = try u.initEnum(StepList.OrderEnum, order_attr, .Explicit);
     }
 
     var maybe_child = node.getFirstChild();
@@ -316,7 +313,7 @@ fn parsePluginList(allocator: Allocator, node: xml.Node) !StepList.PluginList {
     var plugin_list = StepList.PluginList.init(allocator);
 
     if (node.getAttribute("order")) |order_attr| {
-        plugin_list.order = try u.initEnum(StepList.OrderEnum, order_attr, .Ascending);
+        plugin_list.order = try u.initEnum(StepList.OrderEnum, order_attr, .Explicit);
     }
 
     var maybe_child = node.getFirstChild();
@@ -361,7 +358,7 @@ fn parsePlugin(allocator: Allocator, node: xml.Node) !StepList.Plugin {
                 }
             } else if (std.mem.eql(u8, element_name, "image")) {
                 if (child.getAttribute("path")) |path_attr| {
-                    plugin.image = .{ .path = path_attr };
+                    plugin.image = .{ .path = try u.replacePathSep(allocator, path_attr) };
                 }
             } else if (std.mem.eql(u8, element_name, "files")) {
                 plugin.files = try parseFileList(allocator, child);
@@ -390,7 +387,7 @@ fn parseConditionFlagList(allocator: Allocator, node: xml.Node) !StepList.Condit
 
             if (std.mem.eql(u8, element_name, "flag")) {
                 const name_attr = child.getAttribute("name") orelse return error.MissingNameAttribute;
-                const value_attr = child.getAttribute("value") orelse return error.MissingValueAttribute;
+                const value_attr = if (child.getFirstChild()) |n| n.getText() orelse "" else "";
 
                 const flag = StepList.SetConditionFlag{
                     .name = name_attr,
