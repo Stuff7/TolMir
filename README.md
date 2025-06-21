@@ -19,7 +19,23 @@ tolmir set gamedir /path/to/skyrim
 
 ---
 
-### 2. Set Load Order
+### 2. Add Your Mods
+
+Place your mod archives (ZIP, 7z, etc.) into the `mods/` folder inside your working directory:
+
+```
+/tolmir/working/directory/
+└── mods/
+    ├── mod1.7z
+    ├── mod2.zip
+    └── mod3.7z
+```
+
+TolMir will handle extraction and installation automatically.
+
+---
+
+### 3. Set Load Order
 
 Edit the `loadorder` file to define the order in which your mods should load. Use the mod filenames **without extensions**.
 
@@ -35,7 +51,7 @@ Only enabled mods will be linked and included in the mounted overlay.
 
 ---
 
-### 3. Install Mods
+### 4. Install Mods
 
 Installs enabled mods by symlinking them from `inflated/` to `installs/`. If a mod includes a FOMOD installer, you'll be prompted for input.
 
@@ -45,7 +61,7 @@ tolmir install
 
 ---
 
-### 4. Mount Mods
+### 5. Mount Mods
 
 Generates `mount.sh` to overlay the mods onto your Skyrim directory according to the load order. Also creates `unmount.sh` to undo the mount cleanly.
 
