@@ -59,6 +59,9 @@ pub fn updateConfig(self: *Self) !void {
 }
 
 pub fn installMods(self: *Self) !void {
+    var arena = std.heap.ArenaAllocator.init(self.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
     var mods_dir = try self.cfg.cwd.openDir(u.mods_dir, .{ .iterate = true });
     defer mods_dir.close();
     var mods = mods_dir.iterate();
@@ -69,15 +72,10 @@ pub fn installMods(self: *Self) !void {
 
         const esp_cached = self.espmap.map.contains(stem);
 
-        const in_path = try self.join(null, .{ u.mods_dir, mod.name });
-        defer self.allocator.free(in_path);
+        const in_path = try self.join(allocator, .{ u.mods_dir, mod.name });
 
-        const inflated_path = try self.join(null, .{ u.inflated_dir, stem });
-        defer self.allocator.free(inflated_path);
+        const inflated_path = try self.join(allocator, .{ u.inflated_dir, stem });
         const is_inflated = u.dirExists(inflated_path);
-
-        var has_fomod = false;
-        var has_data = false;
 
         if (!is_inflated or !esp_cached) {
             std.debug.print(u.ansi("Processing mod: ", "1") ++ u.ansi("{s}\n", "92"), .{inflated_path});
@@ -86,12 +84,6 @@ pub fn installMods(self: *Self) !void {
             while (reader.nextEntry()) |entry| {
                 const name = entry.pathName();
 
-                if (std.mem.eql(u8, name, "fomod/ModuleConfig.xml")) {
-                    has_fomod = true;
-                } else if (std.mem.eql(u8, name, "Data")) {
-                    has_data = true;
-                }
-
                 if (!is_inflated) try reader.extractToFile(self.*, 2, entry, inflated_path);
                 if (esp_cached) continue;
                 try self.espmap.appendEsp(stem, name);
@@ -99,27 +91,25 @@ pub fn installMods(self: *Self) !void {
             try reader.close();
         }
 
-        const install_path = if (has_fomod or has_data)
-            try self.join(null, .{ u.installs_dir, stem })
-        else
-            try self.join(null, .{ u.installs_dir, stem, "Data" });
-        defer self.allocator.free(install_path);
+        const fomod_file = try fs.path.join(allocator, &[_][]const u8{ inflated_path, "fomod", "ModuleConfig.xml" });
+        const data_dir = try fs.path.join(allocator, &[_][]const u8{ inflated_path, "Data" });
 
-        if (u.dirExists(install_path)) break;
+        const has_fomod = if (fs.cwd().statFile(fomod_file)) |_| true else |_| false;
+        const has_data = u.dirExists(data_dir);
+
+        const install_path = if (has_fomod or has_data)
+            try self.join(allocator, .{ u.installs_dir, stem })
+        else
+            try self.join(allocator, .{ u.installs_dir, stem, "Data" });
+
+        if (u.dirExists(install_path)) continue;
 
         std.debug.print(u.ansi("Installing mod: ", "1") ++ u.ansi("{s}\n", "92"), .{install_path});
         if (has_fomod) {
-            const fomod_path = try fs.path.join(
-                self.allocator,
-                &[_][]const u8{ inflated_path, "fomod", "ModuleConfig.xml" },
-            );
-            defer self.allocator.free(fomod_path);
-
-            var fomod = try Fomod.init(self.allocator, fomod_path, inflated_path, install_path);
-            defer fomod.deinit();
+            var fomod = try Fomod.init(allocator, fomod_file, inflated_path, install_path);
             try fomod.runInstaller();
         } else {
-            try u.symlinkRecursive(self.allocator, null, inflated_path, install_path);
+            try u.symlinkRecursive(self.allocator, 2, inflated_path, install_path);
         }
     }
 
