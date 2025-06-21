@@ -61,10 +61,31 @@ tolmir install
 
 ---
 
-### 5. Mount Mods
+### 5. Generate Mount Scripts
 
-Generates `mount.sh` to overlay the mods onto your Skyrim directory according to the load order. Also creates `unmount.sh` to undo the mount cleanly.
+Creates two scripts:
+
+* `mount.sh`: mounts your modded loadout over the Skyrim directory using OverlayFS
+* `unmount.sh`: cleanly unmounts the overlay when you're done
 
 ```sh
 tolmir mount
 ```
+
+---
+
+### 6. Play the Game
+
+Run the `mount.sh` script to apply your mods, then launch Skyrim as usual:
+
+```sh
+./mount.sh
+```
+
+When you're finished playing, run:
+
+```sh
+./unmount.sh
+```
+
+This restores your game directory to its unmodded state.
