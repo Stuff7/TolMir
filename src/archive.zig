@@ -48,10 +48,9 @@ pub fn skipEntryData(self: Self) void {
 pub fn extractToFile(self: Self, state: State, indent: comptime_int, entry: Entry, base: []const u8) !void {
     if (entry.fileType() != .regular) return;
 
-    const name = entry.pathName();
-    const raw_path = try fs.path.join(state.allocator, &[_][]const u8{ base, name });
-    defer state.allocator.free(raw_path);
-    const path = try u.sanitizePath(raw_path);
+    const name = try u.sanitizePath(entry.pathName());
+    const path = try fs.path.join(state.allocator, &[_][]const u8{ base, name });
+    defer state.allocator.free(path);
 
     if (fs.path.dirname(path)) |dir| try fs.cwd().makePath(dir);
 

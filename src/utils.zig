@@ -22,27 +22,20 @@ pub fn replacePathSep(allocator: Allocator, source: []const u8) ![]const u8 {
 }
 
 pub fn escapeShellArg(allocator: Allocator, path: []const u8) ![]u8 {
-    var quote_count: usize = 0;
-    for (path) |c| {
-        if (c == '\'') quote_count += 1;
-    }
-
-    const total_size = 2 + path.len + (quote_count * 3);
-
-    var result = try std.ArrayList(u8).initCapacity(allocator, total_size);
+    var result = std.ArrayList(u8).init(allocator);
     defer result.deinit();
 
-    try result.append('\'');
+    try result.append('"');
 
     for (path) |c| {
-        if (c == '\'') {
-            try result.appendSlice("'\\''");
+        if (c == '"') {
+            try result.appendSlice("\\\"");
         } else {
             try result.append(c);
         }
     }
 
-    try result.append('\'');
+    try result.append('"');
 
     return result.toOwnedSlice();
 }
@@ -155,6 +148,23 @@ pub fn stripInitialXmlComments(xml: []const u8) []const u8 {
     }
 
     return xml[pos..];
+}
+
+pub fn makeRelativeToCwd(allocator: std.mem.Allocator, abs: []const u8) ?[]const u8 {
+    const cwd = std.fs.cwd().realpathAlloc(allocator, ".") catch return null;
+
+    if (std.mem.startsWith(u8, abs, cwd)) {
+        const base_with_slash = if (std.mem.endsWith(u8, cwd, "/"))
+            cwd
+        else
+            std.fmt.allocPrint(allocator, "{s}/", .{cwd}) catch return null;
+        defer allocator.free(base_with_slash);
+
+        if (std.mem.startsWith(u8, abs, base_with_slash)) {
+            return abs[base_with_slash.len..];
+        }
+    }
+    return null;
 }
 
 pub fn nukeDir(path: []const u8) !void {

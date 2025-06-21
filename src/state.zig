@@ -19,16 +19,17 @@ espmap: EspMap,
 
 pub fn init(allocator: Allocator) !Self {
     const args = try std.process.argsAlloc(allocator);
+    errdefer std.process.argsFree(allocator, args);
 
     if (args.len < 2) {
-        showUsage(allocator, args);
+        showUsage(args);
         return error.MissingArgs;
     }
 
     const cfg = Config.deserialize(allocator) catch Config{ .allocator = allocator };
     return Self{
         .allocator = allocator,
-        .step = try Step.init(allocator, args),
+        .step = try Step.init(args),
         .cfg = cfg,
         .args = args,
         .loadorder = try LoadOrder.init(allocator, cfg.cwd),
@@ -39,21 +40,26 @@ pub fn init(allocator: Allocator) !Self {
 pub fn updateConfig(self: *Self) !void {
     const args = self.args[2..];
     if (args.len < 2) {
-        showUsage(self.allocator, self.args);
-        return error.MissingArgs;
+        std.debug.print(
+            u.ansi("cwd:     ", "1") ++ u.ansi("{s}\n", "93") ++
+                u.ansi("gamedir: ", "1") ++ u.ansi("{s}\n", "93"),
+            .{ self.cfg.cwd_path, self.cfg.game_dir },
+        );
+        return;
     }
 
     var i: usize = 0;
     while (i < args.len) : (i += 2) {
         const key = args[i];
         const val = args[i + 1];
-        std.debug.print("{s}: {s}\n", .{ key, val });
+        const v = std.mem.trimEnd(u8, val, "/");
+        std.debug.print(u.ansi("{s}: ", "1") ++ u.ansi("{s}\n", "93"), .{ key, v });
 
         if (std.mem.eql(u8, key, "cwd")) {
-            self.cfg.cwd_path = val;
-            self.cfg.cwd = if (val.len == 0) fs.cwd() else try fs.cwd().openDir(val, .{});
+            self.cfg.cwd_path = v;
+            self.cfg.cwd = if (v.len == 0) fs.cwd() else try fs.cwd().openDir(v, .{});
         } else if (std.mem.eql(u8, key, "gamedir")) {
-            self.cfg.game_dir = val;
+            self.cfg.game_dir = v;
         }
     }
 }
@@ -137,12 +143,12 @@ pub fn writeMountScripts(self: @This()) !void {
 
     const orig_path = try u.escapeShellArg(allocator, try std.fmt.allocPrint(allocator, "{s}.orig", .{self.cfg.game_dir}));
 
-    const upper_path = try self.join(allocator, .{ "overlay", "upper" });
-    const work_path = try self.join(allocator, .{ "overlay", "work" });
-    const merged_path = try u.escapeShellArg(allocator, self.cfg.game_dir);
+    if (u.makeRelativeToCwd(allocator, try self.join(allocator, .{"overlay"}))) |p|
+        try u.nukeDir(p);
 
-    try u.nukeDir(upper_path);
-    try u.nukeDir(work_path);
+    const upper_path = try u.escapeShellArg(allocator, try self.join(allocator, .{ "overlay", "upper" }));
+    const work_path = try u.escapeShellArg(allocator, try self.join(allocator, .{ "overlay", "work" }));
+    const merged_path = try u.escapeShellArg(allocator, self.cfg.game_dir);
 
     var mount_buf = std.ArrayList(u8).init(allocator);
     const mount_w = mount_buf.writer();
@@ -150,17 +156,13 @@ pub fn writeMountScripts(self: @This()) !void {
     var unmount_buf = std.ArrayList(u8).init(allocator);
     const unmount_w = unmount_buf.writer();
 
-    try mount_w.writeAll(
-        \\#!/bin/bash
-        \\set -e
-        \\
-    );
-    try mount_w.print("sudo mv {s} {s}\n", .{ merged_path, orig_path });
-    try mount_w.print("sudo mkdir -p {s} {s} {s}\n", .{
+    try mount_w.writeAll("#!/bin/bash\n\nset -e\n\n");
+    try mount_w.print("mv \\\n{s} \\\n{s}\n\n", .{ merged_path, orig_path });
+    try mount_w.print("mkdir -p \\\n{s} \\\n{s} \\\n{s}\n\n", .{
         upper_path, work_path, merged_path,
     });
 
-    try mount_w.writeAll("sudo mount -t overlay overlay -o lowerdir=");
+    try mount_w.writeAll("sudo mount -t overlay overlay -o \\\n");
 
     const keys = self.loadorder.mods.keys();
     const vals = self.loadorder.mods.values();
@@ -168,25 +170,24 @@ pub fn writeMountScripts(self: @This()) !void {
     while (i > 0) {
         i -= 1;
         if (!vals[i]) continue;
+
         const path = try u.escapeShellArg(
             allocator,
             try self.join(allocator, .{ u.installs_dir, keys[i] }),
         );
-        try mount_w.print("{s}:", .{path});
+
+        try mount_w.print("lowerdir+={s},\\\n", .{path});
     }
 
-    try mount_w.print("{s},upperdir={s},workdir={s} {s}\n", .{
-        orig_path, upper_path, work_path, merged_path,
-    });
+    try mount_w.print("lowerdir+={s},\\\n", .{orig_path});
+    try mount_w.print("upperdir={s},\\\n", .{upper_path});
+    try mount_w.print("workdir={s} \\\n", .{work_path});
+    try mount_w.print("{s}\n", .{merged_path});
 
-    try unmount_w.writeAll(
-        \\#!/bin/bash
-        \\set -e
-        \\
-    );
+    try unmount_w.writeAll("#!/bin/bash\n\nset -e\n\n");
     try unmount_w.print("sudo umount {s}\n", .{merged_path});
     try unmount_w.print("sudo rm -rf {s}\n", .{merged_path});
-    try unmount_w.print("sudo mv {s} {s}\n", .{ orig_path, merged_path });
+    try unmount_w.print("mv \\\n{s} \\\n{s}\n", .{ orig_path, merged_path });
 
     const mount_sh = try self.join(allocator, .{"mount.sh"});
     try writeFile(mount_sh, mount_buf.items);
@@ -225,8 +226,7 @@ fn findOption(args: [][:0]u8, comptime name: []const u8) ?[]const u8 {
     return null;
 }
 
-fn showUsage(allocator: Allocator, args: [][:0]u8) void {
-    defer std.process.argsFree(allocator, args);
+fn showUsage(args: [][:0]u8) void {
     std.debug.print(u.ansi("Usage: ", "1") ++ "{s} " ++ u.ansi("[steps] ", "92") ++
         "\n" ++
         u.ansi("Steps:\n  ", "92") ++
@@ -243,12 +243,14 @@ fn showUsage(allocator: Allocator, args: [][:0]u8) void {
 }
 
 fn join(self: Self, allocator: ?Allocator, paths: anytype) ![]const u8 {
+    const alloc = allocator orelse self.allocator;
     var ps: [paths.len + 1][]const u8 = undefined;
-    ps[0] = self.cfg.cwd_path;
+    ps[0] = try fs.cwd().realpathAlloc(alloc, self.cfg.cwd_path);
     inline for (paths, 1..) |p, i| {
         ps[i] = p;
     }
-    return fs.path.join(allocator orelse self.allocator, &ps);
+
+    return fs.path.joinZ(alloc, &ps);
 }
 
 const Step = enum {
@@ -256,12 +258,12 @@ const Step = enum {
     mount,
     set,
 
-    pub fn init(allocator: Allocator, args: [][:0]u8) !Step {
+    pub fn init(args: [][:0]u8) !Step {
         inline for (@typeInfo(Step).@"enum".fields) |f| {
             if (std.mem.eql(u8, args[1], f.name)) return @field(Step, f.name);
         }
         std.debug.print(u.ansi("Unknown step: ", "1") ++ "{s}\n", .{args[1]});
-        showUsage(allocator, args);
+        showUsage(args);
         return error.UnknownStep;
     }
 };
