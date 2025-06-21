@@ -1,4 +1,5 @@
 zig-out
 .zig-cache
 logs
+tolmir.ini
 **/**/bin

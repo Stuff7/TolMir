@@ -13,7 +13,8 @@ const print = std.debug.print;
 const Walker = @This();
 
 allocator: Allocator,
-cwd: []const u8,
+in_dir: []const u8,
+out_dir: []const u8,
 config: Config,
 flags: std.StringHashMap([]const u8),
 selected_files: ArrayList(FileInstallation),
@@ -25,12 +26,13 @@ const FileInstallation = struct {
     priority: i32 = 0,
 };
 
-pub fn init(allocator: Allocator, config_path: []const u8, cwd: []const u8) !Walker {
+pub fn init(allocator: Allocator, config_path: []const u8, in_dir: []const u8, out_dir: []const u8) !Walker {
     const config = try parser.parseConfig(allocator, config_path);
 
     return Walker{
         .allocator = allocator,
-        .cwd = cwd,
+        .in_dir = in_dir,
+        .out_dir = out_dir,
         .config = config,
         .flags = std.StringHashMap([]const u8).init(allocator),
         .selected_files = ArrayList(FileInstallation).init(allocator),
@@ -49,10 +51,10 @@ pub fn runInstaller(self: *Walker) !void {
 
     if (self.config.module_image) |img| {
         if (img.path) |path| {
-            const p = try std.fs.path.join(self.allocator, &[_][]const u8{ self.cwd, path });
+            const p = try std.fs.path.join(self.allocator, &[_][]const u8{ self.in_dir, path });
             defer self.allocator.free(p);
             print("\n", .{});
-            try u.renderImage1337(p, "100");
+            try u.renderImage1337(self.allocator, p, "100");
             print("\n", .{});
         }
     }
@@ -80,7 +82,7 @@ pub fn runInstaller(self: *Walker) !void {
         try self.processConditionalFileInstalls(cfi);
     }
 
-    if (self.confirmInstall()) self.install();
+    if (self.confirmInstall()) try self.install();
 }
 
 fn checkDependencies(self: Walker, deps: CompositeDependency) bool {
@@ -179,8 +181,6 @@ fn processInstallSteps(self: *Walker, steps: StepList) !void {
 
 fn processGroups(self: *Walker, groups: StepList.GroupList) !void {
     for (groups.groups.items) |group| {
-        print("\n" ++ u.ansi("{s}", "1;37") ++ "\n", .{group.name});
-
         const selections = try self.getUserSelection(group);
         defer selections.deinit();
 
@@ -206,20 +206,10 @@ fn printOptions(self: Walker, group: StepList.Group) !void {
     for (group.plugins.plugins.items, 0..) |plugin, idx| {
         const type_info = self.getPluginTypeInfo(plugin);
         if (type_info.selectable) {
-            if (plugin.image) |img| {
-                const p = try std.fs.path.join(self.allocator, &[_][]const u8{ self.cwd, img.path });
-                defer self.allocator.free(p);
-                print("\n", .{});
-                try u.renderImage1337(p, "100");
-                print("\n", .{});
-            }
-
-            print("  " ++ u.ansi("[{d}]", "1;36") ++ " " ++ u.ansi("{s}", "32") ++ " " ++ u.ansi("{s}", "1;37") ++ ": " ++ u.ansi("{s}", "37") ++ "\n", .{
-                idx,
-                type_info.plugin_type.marker(),
-                plugin.name,
-                plugin.description,
-            });
+            print(
+                u.ansi("  [{d}] ", "1;36") ++ u.ansi("{s} ", "32") ++ u.ansi("{s}\n", "1;37"),
+                .{ idx, type_info.plugin_type.marker(), plugin.name },
+            );
         }
     }
 }
@@ -249,9 +239,144 @@ fn getPluginTypeInfo(self: Walker, plugin: StepList.Plugin) struct { plugin_type
     }
 }
 
+const UserCmd = union(enum) {
+    empty,
+    info: usize,
+    selection: usize,
+    clear,
+    err: []const u8,
+
+    pub fn parse(group: StepList.Group) UserCmd {
+        var input_buffer: [256]u8 = undefined;
+        const input_str = std.io.getStdIn().reader().readUntilDelimiterOrEof(input_buffer[0..], '\n') catch |err| {
+            return if (err == error.EndOfStream) .empty else .{ .err = "Error reading input, try again." };
+        } orelse return .empty;
+
+        const trimmed_input = std.mem.trim(u8, input_str, " \t\r\n");
+        if (trimmed_input.len == 0) return .empty;
+
+        if (trimmed_input.len > 1 and trimmed_input[trimmed_input.len - 1] == 'i') {
+            const index_str = trimmed_input[0 .. trimmed_input.len - 1];
+            const index = std.fmt.parseInt(usize, index_str, 10) catch {
+                return .{ .err = "Invalid index format, try again." };
+            };
+
+            if (index >= group.plugins.plugins.items.len) {
+                return .{ .err = "Index out of range." };
+            }
+
+            return .{ .info = index };
+        }
+
+        if (std.mem.eql(u8, trimmed_input, "clear")) return .clear;
+
+        const input = std.fmt.parseInt(usize, trimmed_input, 10) catch {
+            return .{ .err = "Invalid input, try again." };
+        };
+
+        return .{ .selection = input };
+    }
+};
+
+const InputConfig = struct {
+    prompt: []const u8,
+    allow_empty: bool,
+    min_selections: usize,
+    max_selections: ?usize, // null means unlimited
+
+    fn printInfo(self: @This(), group: StepList.Group) void {
+        print(u.ansi("Commands", "1") ++ ":\n  " ++
+            u.ansi("{{idx}}", "1;4;92") ++ u.ansi("i", "1;92") ++ ": Print option details\n  " ++
+            u.ansi("clear", "1;92") ++ ": Clear the terminal and print this message\n\n", .{});
+        print(u.ansi("Step: ", "1") ++ u.ansi("{s}\n", "38;5;226"), .{group.name});
+        print(u.ansi("{s}", "1;34") ++ "\n", .{self.prompt});
+    }
+};
+
+fn printModuleInfo(self: Walker) void {
+    print(u.ansi("Module: ", "1;33") ++ u.ansi("{s}", "1;37") ++ "\n", .{self.config.module_name.text});
+}
+
+fn getInputWithValidation(
+    self: Walker,
+    group: StepList.Group,
+    selections: *std.ArrayList(usize),
+    config: InputConfig,
+) !void {
+    config.printInfo(group);
+    try self.printOptions(group);
+
+    while (true) {
+        print(u.ansi("> ", "1;32"), .{});
+
+        switch (UserCmd.parse(group)) {
+            .clear => {
+                u.clearTerminal();
+                self.printModuleInfo();
+                config.printInfo(group);
+                try self.printOptions(group);
+            },
+            .empty => {
+                if (config.allow_empty and selections.items.len >= config.min_selections) {
+                    return;
+                } else if (selections.items.len < config.min_selections) {
+                    print(u.ansi("You must select at least {} plugin(s).", "1;31") ++ "\n", .{config.min_selections});
+                } else {
+                    print(u.ansi("Invalid input, try again.", "1;31") ++ "\n", .{});
+                }
+            },
+            .info => |index| {
+                try self.showPluginInfo(group.plugins.plugins.items[index]);
+            },
+            .selection => |input| {
+                if (try self.validateAndAddSelection(group, selections, input)) {
+                    if (config.max_selections) |max| {
+                        if (selections.items.len >= max) {
+                            return;
+                        }
+                    }
+                }
+            },
+            .err => |msg| {
+                print(u.ansi("{s}", "1;31") ++ "\n", .{msg});
+            },
+        }
+    }
+}
+
+fn validateAndAddSelection(
+    self: Walker,
+    group: StepList.Group,
+    selections: *std.ArrayList(usize),
+    input: usize,
+) !bool {
+    if (input >= group.plugins.plugins.items.len) {
+        print(u.ansi("Index out of range.", "1;31") ++ "\n", .{});
+        return false;
+    }
+
+    const plugin = group.plugins.plugins.items[input];
+    const type_info = self.getPluginTypeInfo(plugin);
+    if (!type_info.selectable) {
+        print(u.ansi("Plugin not selectable.", "1;31") ++ "\n", .{});
+        return false;
+    }
+
+    for (selections.items) |sel| {
+        if (sel == input) {
+            print(u.ansi("Plugin already selected.", "1;33") ++ "\n", .{});
+            return false;
+        }
+    }
+
+    try selections.append(input);
+    return true;
+}
+
 fn getUserSelection(self: Walker, group: StepList.Group) !std.ArrayList(usize) {
     var selections = std.ArrayList(usize).init(self.allocator);
 
+    // Auto-select required and recommended plugins
     for (group.plugins.plugins.items, 0..) |plugin, idx| {
         const type_info = self.getPluginTypeInfo(plugin);
         if (type_info.plugin_type == .Required) {
@@ -267,6 +392,7 @@ fn getUserSelection(self: Walker, group: StepList.Group) !std.ArrayList(usize) {
 
     switch (group.group_type) {
         .SelectAll => {
+            // Auto-select all selectable plugins that aren't already selected
             for (group.plugins.plugins.items, 0..) |plugin, idx| {
                 const type_info = self.getPluginTypeInfo(plugin);
                 if (type_info.selectable and type_info.plugin_type != .Required) {
@@ -284,129 +410,59 @@ fn getUserSelection(self: Walker, group: StepList.Group) !std.ArrayList(usize) {
             }
         },
         .SelectExactlyOne => {
-            print(u.ansi("Choose exactly one plugin by index:", "1;34") ++ "\n", .{});
-            try self.printOptions(group);
-            while (true) {
-                print(u.ansi("> ", "1;32"), .{});
-                const selected = u.scanUsize() catch {
-                    print(u.ansi("Invalid input, try again.", "1;31") ++ "\n", .{});
-                    continue;
-                };
-                if (selected >= group.plugins.plugins.items.len) {
-                    print(u.ansi("Index out of range.", "1;31") ++ "\n", .{});
-                    continue;
-                }
-                const plugin = group.plugins.plugins.items[selected];
-                const type_info = self.getPluginTypeInfo(plugin);
-                if (!type_info.selectable) {
-                    print(u.ansi("Plugin not selectable.", "1;31") ++ "\n", .{});
-                    continue;
-                }
-                try selections.append(selected);
-                break;
-            }
+            try self.getInputWithValidation(group, &selections, InputConfig{
+                .prompt = "Choose exactly one plugin by index:",
+                .allow_empty = false,
+                .min_selections = 1,
+                .max_selections = 1,
+            });
         },
         .SelectAtMostOne => {
-            while (true) {
-                print(u.ansi("Choose zero or one plugin by index (empty input to skip):", "1;34") ++ "\n", .{});
-                try self.printOptions(group);
-                print(u.ansi("> ", "1;32"), .{});
-
-                const selected = u.scanUsize() catch |err| {
-                    return switch (err) {
-                        error.EndOfStream => selections,
-                        else => {
-                            print(u.ansi("⚠️  Invalid input. Try again.\n", "1;31"), .{});
-                            continue;
-                        },
-                    };
-                };
-
-                if (selected >= group.plugins.plugins.items.len) {
-                    print(u.ansi("⚠️  Index out of range. Try again.\n", "1;31"), .{});
-                    continue;
-                }
-
-                const plugin = group.plugins.plugins.items[selected];
-                const type_info = self.getPluginTypeInfo(plugin);
-
-                if (!type_info.selectable) {
-                    print(u.ansi("⚠️  Plugin is not selectable. Try again.\n", "1;31"), .{});
-                    continue;
-                }
-
-                try selections.append(selected);
-                break;
-            }
+            try self.getInputWithValidation(group, &selections, InputConfig{
+                .prompt = "Choose zero or one plugin by index (empty input to skip):",
+                .allow_empty = true,
+                .min_selections = 0,
+                .max_selections = 1,
+            });
         },
         .SelectAtLeastOne => {
-            print(u.ansi("Choose at least one plugin by index (empty input to finish):", "1;34") ++ "\n", .{});
-            try self.printOptions(group);
-            while (true) {
-                print(u.ansi("> ", "1;32"), .{});
-                const input = u.scanUsize() catch {
-                    if (selections.items.len == 0) {
-                        print(u.ansi("You must select at least one plugin.", "1;31") ++ "\n", .{});
-                        continue;
-                    } else {
-                        break;
-                    }
-                };
-                if (input >= group.plugins.plugins.items.len) {
-                    print(u.ansi("Index out of range.", "1;31") ++ "\n", .{});
-                    continue;
-                }
-                const plugin = group.plugins.plugins.items[input];
-                const type_info = self.getPluginTypeInfo(plugin);
-                if (!type_info.selectable) {
-                    print(u.ansi("Plugin not selectable.", "1;31") ++ "\n", .{});
-                    continue;
-                }
-                var already_selected = false;
-                for (selections.items) |sel| {
-                    if (sel == input) {
-                        already_selected = true;
-                        break;
-                    }
-                }
-                if (!already_selected) {
-                    try selections.append(input);
-                }
-            }
+            try self.getInputWithValidation(group, &selections, InputConfig{
+                .prompt = "Choose at least one plugin by index (empty input to finish):",
+                .allow_empty = true,
+                .min_selections = 1,
+                .max_selections = null,
+            });
         },
         .SelectAny => {
-            print(u.ansi("Choose any plugins by index (empty input to finish):", "1;34") ++ "\n", .{});
-            try self.printOptions(group);
-            while (true) {
-                print(u.ansi("> ", "1;32"), .{});
-                const input = u.scanUsize() catch {
-                    break;
-                };
-                if (input >= group.plugins.plugins.items.len) {
-                    print(u.ansi("Index out of range.", "1;31") ++ "\n", .{});
-                    continue;
-                }
-                const plugin = group.plugins.plugins.items[input];
-                const type_info = self.getPluginTypeInfo(plugin);
-                if (!type_info.selectable or type_info.plugin_type == .Required) {
-                    print(u.ansi("Plugin not selectable.", "1;31") ++ "\n", .{});
-                    continue;
-                }
-                var already_selected = false;
-                for (selections.items) |sel| {
-                    if (sel == input) {
-                        already_selected = true;
-                        break;
-                    }
-                }
-                if (!already_selected) {
-                    try selections.append(input);
-                }
-            }
+            try self.getInputWithValidation(group, &selections, InputConfig{
+                .prompt = "Choose any plugins by index (empty input to finish):",
+                .allow_empty = true,
+                .min_selections = 0,
+                .max_selections = null,
+            });
         },
     }
 
     return selections;
+}
+
+fn showPluginInfo(self: Walker, plugin: StepList.Plugin) !void {
+    print("\n" ++ u.ansi("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "2;37") ++ "\n", .{});
+
+    if (plugin.image) |img| {
+        const path = try std.fs.path.join(self.allocator, &[_][]const u8{ self.in_dir, img.path });
+        defer self.allocator.free(path);
+        try u.renderImage1337(self.allocator, path, "110");
+        print("\n", .{});
+    }
+
+    print(u.ansi("📦 ", "1;36") ++ u.ansi("{s}", "1;37;4") ++ "\n", .{plugin.name});
+
+    if (plugin.description.len > 0) {
+        print(u.ansi("{s}", "37") ++ "\n", .{plugin.description});
+    }
+
+    print(u.ansi("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "2;37") ++ "\n\n", .{});
 }
 
 fn processConditionalFileInstalls(self: *Walker, cfi: @import("conditional_file_install_list.zig")) !void {
@@ -466,17 +522,26 @@ fn confirmInstall(self: Walker) bool {
     }
 }
 
-fn install(self: Walker) void {
+fn install(self: Walker) !void {
     print("\n" ++ u.ansi("=== Installation Process ===", "1;36") ++ "\n", .{});
     if (self.selected_files.items.len > 0) {
         for (self.selected_files.items) |file| {
             if (file.is_folder) {
+                const src = try std.fs.path.join(
+                    self.allocator,
+                    &[_][]const u8{ self.in_dir, file.source },
+                );
+                defer self.allocator.free(src);
                 print(u.ansi("📁 Installing folder: ", "1;34") ++ u.ansi("{s}", "1;37"), .{file.source});
                 if (file.destination) |dest| {
-                    print(" " ++ u.ansi("to ", "36") ++ u.ansi("{s}", "37"), .{dest});
+                    const dst = try std.fs.path.join(
+                        self.allocator,
+                        &[_][]const u8{ self.out_dir, dest },
+                    );
+                    defer self.allocator.free(dst);
+                    print(" " ++ u.ansi("to ", "36") ++ u.ansi("{s}\n", "37"), .{dest});
+                    try u.symlinkRecursive(self.allocator, 2, src, dst);
                 }
-                print("\n", .{});
-                print("   " ++ u.ansi("→ Copy all files from '", "90") ++ u.ansi("{s}", "37") ++ u.ansi("' folder", "90") ++ "\n", .{file.source});
             } else {
                 print(u.ansi("📄 Installing file: ", "1;32") ++ u.ansi("{s}", "1;37"), .{file.source});
                 if (file.destination) |dest| {

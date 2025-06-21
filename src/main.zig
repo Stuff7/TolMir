@@ -10,10 +10,11 @@ pub fn main() !void {
     const allocator = gpa.allocator();
 
     var state = try State.init(allocator);
-    defer state.deinit();
+    defer state.deinit() catch |err| std.debug.print("Error: {}\n", .{err});
 
     switch (state.step) {
         .install => try state.installMods(),
-        else => {},
+        .mount => try state.writeMountScripts(),
+        .set => try state.updateConfig(),
     }
 }

@@ -5,23 +5,30 @@ const Allocator = std.mem.Allocator;
 const Self = @This();
 
 allocator: Allocator,
-file: std.fs.File,
+cwd: std.fs.Dir,
 content: std.ArrayList(u8),
 map: Map,
 
 const Map = std.StringHashMap(std.ArrayList([]const u8));
 
 pub fn init(allocator: Allocator, cwd: std.fs.Dir) !Self {
-    var file = try cwd.createFile("espmap", .{ .truncate = false, .read = true });
+    const map = Map.init(allocator);
+    var file = cwd.openFile("espmap", .{}) catch return Self{
+        .allocator = allocator,
+        .cwd = cwd,
+        .map = map,
+        .content = std.ArrayList(u8).init(allocator),
+    };
+
+    defer file.close();
     const stat = try file.stat();
     var content = try std.ArrayList(u8).initCapacity(allocator, stat.size);
     content.expandToCapacity();
     _ = try file.readAll(content.items);
-    const map = Map.init(allocator);
 
     var self = Self{
         .allocator = allocator,
-        .file = file,
+        .cwd = cwd,
         .map = map,
         .content = content,
     };
@@ -58,8 +65,9 @@ pub fn serialize(self: *Self) !void {
         }
     }
 
-    try self.file.seekTo(0);
-    try self.file.writeAll(self.content.items);
+    var file = try self.cwd.createFile("espmap", .{});
+    defer file.close();
+    try file.writeAll(self.content.items);
 }
 
 pub fn deserialize(self: *Self) !void {
@@ -102,7 +110,6 @@ pub fn deserialize(self: *Self) !void {
 }
 
 pub fn deinit(self: *Self) void {
-    self.file.close();
     self.content.deinit();
 
     var it = self.map.iterator();

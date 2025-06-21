@@ -4,19 +4,26 @@ const Allocator = std.mem.Allocator;
 const Self = @This();
 
 allocator: Allocator,
-file: std.fs.File,
+cwd: std.fs.Dir,
 file_content: std.ArrayList(u8),
 mods: std.StringArrayHashMap(bool),
 
 pub fn init(allocator: Allocator, cwd: std.fs.Dir) !Self {
-    const file = try cwd.createFile("loadorder", .{ .truncate = false, .read = true });
+    var mods = std.StringArrayHashMap(bool).init(allocator);
+    const file = cwd.openFile("loadorder", .{}) catch return Self{
+        .allocator = allocator,
+        .cwd = cwd,
+        .file_content = std.ArrayList(u8).init(allocator),
+        .mods = mods,
+    };
+
+    defer file.close();
     const stat = try file.stat();
     var file_content = try std.ArrayList(u8).initCapacity(allocator, stat.size);
     file_content.expandToCapacity();
     _ = try file.readAll(file_content.items);
 
     var it = std.mem.splitScalar(u8, file_content.items, '\n');
-    var mods = std.StringArrayHashMap(bool).init(allocator);
 
     while (it.next()) |entry| {
         if (entry.len < 2) continue;
@@ -27,7 +34,7 @@ pub fn init(allocator: Allocator, cwd: std.fs.Dir) !Self {
 
     return Self{
         .allocator = allocator,
-        .file = file,
+        .cwd = cwd,
         .file_content = file_content,
         .mods = mods,
     };
@@ -48,12 +55,11 @@ pub fn serialize(self: *Self) !void {
         try self.file_content.append('\n');
     }
 
-    try self.file.seekTo(0);
-    try self.file.writeAll(self.file_content.items);
+    const file = try self.cwd.createFile("loadorder", .{});
+    try file.writeAll(self.file_content.items);
 }
 
 pub fn deinit(self: *Self) void {
-    self.file.close();
     self.file_content.deinit();
 
     for (self.mods.keys()) |k| self.allocator.free(k);

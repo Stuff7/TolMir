@@ -13,14 +13,45 @@ pub fn ansi(comptime txt: []const u8, comptime styles: []const u8) []const u8 {
     return "\x1b[" ++ styles ++ "m" ++ txt ++ "\x1b[0m";
 }
 
+pub fn clearTerminal() void {
+    print("\x1b[3J\x1b[H\x1b[2J", .{});
+}
+
 pub fn replacePathSep(allocator: Allocator, source: []const u8) ![]const u8 {
     return try std.mem.replaceOwned(u8, allocator, source, "\\", "/");
 }
 
-pub fn renderImage1337(path: []const u8, width: []const u8) !void {
-    const allocator = std.heap.page_allocator;
+pub fn escapeShellArg(allocator: Allocator, path: []const u8) ![]u8 {
+    var quote_count: usize = 0;
+    for (path) |c| {
+        if (c == '\'') quote_count += 1;
+    }
 
-    var file = try std.fs.cwd().openFile(path, .{});
+    const total_size = 2 + path.len + (quote_count * 3);
+
+    var result = try std.ArrayList(u8).initCapacity(allocator, total_size);
+    defer result.deinit();
+
+    try result.append('\'');
+
+    for (path) |c| {
+        if (c == '\'') {
+            try result.appendSlice("'\\''");
+        } else {
+            try result.append(c);
+        }
+    }
+
+    try result.append('\'');
+
+    return result.toOwnedSlice();
+}
+
+pub fn renderImage1337(allocator: Allocator, path: []const u8, width: []const u8) !void {
+    var file = std.fs.cwd().openFile(path, .{}) catch {
+        print(ansi("image: ", "2") ++ ansi("{s} ", "1") ++ ansi("NOT FOUND\n", "1;93"), .{path});
+        return;
+    };
     defer file.close();
 
     const file_size = try file.getEndPos();
@@ -54,19 +85,6 @@ pub fn trimWhitespace(s: []const u8) []const u8 {
     while (end > start and std.ascii.isWhitespace(s[end - 1])) : (end -= 1) {}
 
     return s[start..end];
-}
-
-pub fn scanUsize() !usize {
-    const stdin = std.io.getStdIn().reader();
-    var bufreader = std.io.bufferedReader(stdin);
-    var reader = bufreader.reader();
-
-    var buf: [32]u8 = undefined;
-    const line = try reader.readUntilDelimiterOrEof(&buf, '\n') orelse "";
-
-    const trimmed = std.mem.trim(u8, line, " \t\r\n");
-    if (trimmed.len == 0) return error.EndOfStream;
-    return try std.fmt.parseInt(usize, trimmed, 10);
 }
 
 /// Caller needs to check if a free is necessary on their end.
@@ -139,9 +157,21 @@ pub fn stripInitialXmlComments(xml: []const u8) []const u8 {
     return xml[pos..];
 }
 
+pub fn nukeDir(path: []const u8) !void {
+    var cwd = std.fs.cwd();
+
+    var result = cwd.openDir(path, .{}) catch |err| {
+        if (err == error.FileNotFound) return;
+        return err;
+    };
+    defer result.close();
+
+    try cwd.deleteTree(path);
+}
+
 pub fn symlinkRecursive(
     allocator: Allocator,
-    indent: comptime_int,
+    indent: ?comptime_int,
     src_path: []const u8,
     dst_path: []const u8,
 ) !void {
@@ -167,9 +197,11 @@ pub fn symlinkRecursive(
 
         switch (entry.kind) {
             .file => {
-                print(" " ** indent ++ ansi("Symlink:\n", "1") ++
-                    " " ** (indent + 2) ++ ansi("{s}\n", "96") ++
-                    " " ** (indent + 2) ++ ansi("{s}\n", "92"), .{ source_full_path, dest_full_path });
+                if (indent) |ind| {
+                    print(" " ** ind ++ ansi("Symlink:\n", "1") ++
+                        " " ** (ind + 2) ++ ansi("{s}\n", "96") ++
+                        " " ** (ind + 2) ++ ansi("{s}\n", "92"), .{ source_full_path, dest_full_path });
+                }
 
                 const source_absolute = try fs.cwd().realpathAlloc(allocator, source_full_path);
                 defer allocator.free(source_absolute);
