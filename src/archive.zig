@@ -21,11 +21,11 @@ pub fn open(path: []const u8, name: []const u8) !Self {
 
     var self = Self{ .archive = a.?, .stem = name };
 
-    if (c.archive_read_support_format_zip(self.archive) != 0) return error.ZipInit;
-    if (c.archive_read_support_format_rar(self.archive) != 0) return error.RarInit;
-    if (c.archive_read_support_format_rar5(self.archive) != 0) return error.Rar5Init;
-    if (c.archive_read_support_format_7zip(self.archive) != 0) return error.Init7z;
-    if (c.archive_read_support_filter_all(self.archive) != 0) return error.ArchiveFilterInit;
+    if (c.archive_read_support_format_all(self.archive) != 0)
+        return error.ArchiveMissingSupport;
+
+    if (c.archive_read_support_filter_all(self.archive) != 0)
+        return error.ArchiveFilterInit;
 
     try self.assert(c.archive_read_open_filename(self.archive, path.ptr, 10240));
 
@@ -66,7 +66,7 @@ pub fn extractToFile(self: Self, state: State, indent: comptime_int, out_path: [
     while (true) {
         const size = c.archive_read_data(self.archive, &buffer, buffer.len);
         if (size == 0) break;
-        if (size < 0) return error.ArchiveReadError;
+        if (size < 0) return self.assert(@intCast(size));
         try writer.writeAll(buffer[0..@intCast(size)]);
     }
 }
