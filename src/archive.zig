@@ -5,7 +5,6 @@ const c = @cImport({
     @cInclude("archive.h");
     @cInclude("archive_entry.h");
 });
-
 const fs = std.fs;
 const Allocator = std.mem.Allocator;
 const print = std.debug.print;
@@ -21,20 +20,19 @@ pub fn open(path: []const u8, name: []const u8) !Self {
 
     var self = Self{ .archive = a.?, .stem = name };
 
-    if (c.archive_read_support_format_all(self.archive) != 0)
-        return error.ArchiveMissingSupport;
+    try self.assert(c.archive_read_support_format_all(self.archive));
+    try self.assert(c.archive_read_support_filter_all(self.archive));
 
-    if (c.archive_read_support_filter_all(self.archive) != 0)
-        return error.ArchiveFilterInit;
+    try self.assert(c.archive_read_set_option(self.archive, null, "read_concatenated_archives", "1"));
+    try self.assert(c.archive_read_set_option(self.archive, null, "hdrcharset", "UTF-8"));
 
-    try self.assert(c.archive_read_open_filename(self.archive, path.ptr, 10240));
-
+    try self.assert(c.archive_read_open_filename(self.archive, path.ptr, 65536));
     return self;
 }
 
 pub fn close(self: *Self) !void {
     try self.assert(c.archive_read_close(self.archive));
-    _ = c.archive_read_free(self.archive);
+    try self.assert(c.archive_read_free(self.archive));
 }
 
 pub fn nextEntry(self: *Self) ?Entry {
@@ -44,7 +42,30 @@ pub fn nextEntry(self: *Self) ?Entry {
 }
 
 pub fn skipEntryData(self: Self) void {
-    _ = c.archive_read_data_skip(self.archive);
+    try self.assert(c.archive_read_data_skip(self.archive));
+}
+
+pub fn getRootDir(allocator: Allocator, in_path: []const u8, stem: []const u8) !?[]const u8 {
+    var self = try Self.open(in_path, stem);
+    var root: []const u8 = "";
+    while (self.nextEntry()) |entry| {
+        if (entry.fileType() != .directory) continue;
+        var path = entry.pathName();
+        const idx = std.mem.indexOfScalar(u8, path, '/') orelse path.len;
+        path = path[0..idx];
+
+        if (root.len == 0) {
+            root = try allocator.dupe(u8, path);
+            continue;
+        }
+
+        if (!std.mem.eql(u8, root, path)) {
+            return null;
+        }
+    }
+    try self.close();
+
+    return root;
 }
 
 pub fn extractToFile(self: Self, state: State, indent: comptime_int, out_path: []const u8, base: []const u8) !void {
@@ -58,7 +79,7 @@ pub fn extractToFile(self: Self, state: State, indent: comptime_int, out_path: [
     defer out.close();
 
     const writer = out.writer();
-    var buffer: [8192]u8 = undefined;
+    var buffer: [2048]u8 = undefined;
 
     print(" " ** indent ++ u.ansi("Inflating:\n", "1") ++
         " " ** (indent + 2) ++ u.ansi("{s}\n", "93") ++
@@ -66,7 +87,10 @@ pub fn extractToFile(self: Self, state: State, indent: comptime_int, out_path: [
     while (true) {
         const size = c.archive_read_data(self.archive, &buffer, buffer.len);
         if (size == 0) break;
-        if (size < 0) return self.assert(@intCast(size));
+        if (size < 0) {
+            self.assert(@intCast(size)) catch {};
+            break;
+        }
         try writer.writeAll(buffer[0..@intCast(size)]);
     }
 }
@@ -75,8 +99,15 @@ fn assert(self: Self, err: c_int) !void {
     if (err == 0) return;
 
     const msg = c.archive_error_string(self.archive);
+    const err_code = c.archive_errno(self.archive);
+
     if (@intFromPtr(msg) != 0) {
-        print("[libarchive]: {s}\n", .{std.mem.span(msg)});
+        print("[libarchive] Error {}: {s}\n", .{ err_code, std.mem.span(msg) });
+    }
+
+    if (err_code == c.ARCHIVE_WARN) {
+        print("Warning condition, continuing...\n", .{});
+        return;
     }
 
     return error.ArchiveError;

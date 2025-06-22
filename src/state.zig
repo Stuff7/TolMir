@@ -98,11 +98,17 @@ pub fn installMods(self: *Self) !void {
 
         if (!is_inflated or !esp_cached) {
             print(u.ansi("Processing mod: ", "1") ++ u.ansi("{s}\n", "92"), .{inflated_path});
+            var root = try Archive.getRootDir(allocator, in_path, stem);
+            if (root) |r| {
+                if (std.mem.eql(u8, r, "Data")) root = null;
+            }
+
             var reader = try Archive.open(in_path, stem);
             try self.loadorder.appendMod(stem, true);
             while (reader.nextEntry()) |entry| {
                 if (entry.fileType() != .regular) continue;
                 var out_path = entry.pathName();
+                if (root) |r| out_path = out_path[r.len + 1 ..];
                 if (std.ascii.eqlIgnoreCase(out_path, "fomod/moduleconfig.xml")) {
                     out_path = try std.ascii.allocLowerString(allocator, out_path);
                 }
