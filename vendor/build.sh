@@ -2,6 +2,17 @@
 
 vendor="$PWD/$(dirname "$BASH_SOURCE")"
 
+cd "$vendor/libb2"
+git clean -xdf && git restore .
+./autogen.sh
+mkdir -p build
+cd build
+../configure --disable-shared --enable-static --disable-openmp
+make
+
+DLIBB2_INCLUDE_DIR="$vendor/libb2/src"
+DLIBB2_LIBRARY="$vendor/libb2/build/src/.libs/libb2.a"
+
 cd "$vendor/libarchive"
 git clean -xdf && git restore .
 cmake -S . -B build \
@@ -9,6 +20,7 @@ cmake -S . -B build \
   -DBUILD_SHARED_LIBS=OFF \
   -DENABLE_WERROR=OFF \
   -DENABLE_OPENSSL=OFF \
+  -DENABLE_LIBB2=ON \
   -DENABLE_LZMA=ON \
   -DENABLE_LZ4=OFF \
   -DENABLE_ZSTD=OFF \

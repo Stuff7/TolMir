@@ -23,6 +23,7 @@ pub fn open(path: []const u8, name: []const u8) !Self {
 
     if (c.archive_read_support_format_zip(self.archive) != 0) return error.ZipInit;
     if (c.archive_read_support_format_rar(self.archive) != 0) return error.RarInit;
+    if (c.archive_read_support_format_rar5(self.archive) != 0) return error.Rar5Init;
     if (c.archive_read_support_format_7zip(self.archive) != 0) return error.Init7z;
     if (c.archive_read_support_filter_all(self.archive) != 0) return error.ArchiveFilterInit;
 
