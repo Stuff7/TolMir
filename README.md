@@ -6,6 +6,24 @@
 
 ---
 
+## 🔧 Build
+
+1. Build required static libraries:
+
+```sh
+vendor/build.sh
+```
+
+2. Compile the TolMir binary:
+
+```sh
+zig build
+```
+
+This will produce a `tolmir` executable in the `zig-out/bin` directory.
+
+---
+
 ## 🚀 Usage
 
 ### 1. Set Paths
