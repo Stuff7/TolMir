@@ -122,6 +122,28 @@ pub fn utf16ToUtf8(allocator: std.mem.Allocator, input: []const u8) ![]const u8 
     return try out.toOwnedSlice();
 }
 
+pub fn replaceXmlEntities(allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
+    var result = input;
+
+    const entities = [_]struct {
+        entity: []const u8,
+        replacement: []const u8,
+    }{
+        .{ .entity = "&apos;", .replacement = "'" },
+        .{ .entity = "&quot;", .replacement = "\"" },
+        .{ .entity = "&lt;", .replacement = "<" },
+        .{ .entity = "&gt;", .replacement = ">" },
+    };
+
+    for (entities) |e| {
+        const temp = try std.mem.replaceOwned(u8, allocator, result, e.entity, e.replacement);
+        if (result.ptr != input.ptr) allocator.free(result); // only free if it's not the original input
+        result = temp;
+    }
+
+    return result;
+}
+
 pub fn stripInitialXmlComments(xml: []const u8) []const u8 {
     var pos: usize = 0;
 

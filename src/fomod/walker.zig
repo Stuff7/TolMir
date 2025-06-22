@@ -341,6 +341,12 @@ fn getInputWithValidation(
                 print(u.ansi("{s}", "1;31") ++ "\n", .{msg});
             },
         }
+
+        if (config.max_selections) |max| {
+            if (selections.items.len >= max) {
+                return;
+            }
+        }
     }
 }
 
@@ -364,7 +370,8 @@ fn validateAndAddSelection(
 
     for (selections.items) |sel| {
         if (sel == input) {
-            print(u.ansi("Plugin already selected.", "1;33") ++ "\n", .{});
+            print(u.ansi("Deselecting idx {}.", "1;33") ++ "\n", .{sel});
+            _ = selections.orderedRemove(sel);
             return false;
         }
     }

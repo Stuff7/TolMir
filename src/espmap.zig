@@ -49,7 +49,15 @@ pub fn appendEsp(self: *Self, stem: []const u8, esp_path: []const u8) !void {
     if (!std.mem.endsWith(u8, esp_path, ".esp")) return;
 
     const esp = std.fs.path.basename(esp_path);
-    try map.append(try self.allocator.dupe(u8, esp));
+    var added = false;
+    for (map.items) |v| {
+        if (std.mem.eql(u8, v, esp)) {
+            added = true;
+            break;
+        }
+    }
+
+    if (!added) try map.append(try self.allocator.dupe(u8, esp));
 }
 
 pub fn serialize(self: *Self) !void {

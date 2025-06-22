@@ -17,7 +17,9 @@ pub fn init(allocator: std.mem.Allocator, path: []const u8) !Self {
     defer allocator.free(contents);
     if (initial_contents.ptr != contents.ptr) allocator.free(initial_contents);
 
-    const sanitized = u.stripInitialXmlComments(contents);
+    var sanitized = u.stripInitialXmlComments(contents);
+    sanitized = try u.replaceXmlEntities(allocator, sanitized);
+    defer allocator.free(sanitized);
 
     const options = c.mxmlOptionsNew() orelse return error.MxmlInit;
     defer c.mxmlOptionsDelete(options);

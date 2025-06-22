@@ -49,7 +49,15 @@ pub fn getRootDir(allocator: Allocator, in_path: []const u8, stem: []const u8) !
     var self = try Self.open(in_path, stem);
     var root: []const u8 = "";
     while (self.nextEntry()) |entry| {
-        if (entry.fileType() != .directory) continue;
+        const typ = entry.fileType();
+
+        if (typ == .regular) {
+            const path = entry.pathName();
+            if (fs.path.dirname(path) == null) return null;
+        }
+
+        if (typ != .directory) continue;
+
         var path = entry.pathName();
         const idx = std.mem.indexOfScalar(u8, path, '/') orelse path.len;
         path = path[0..idx];
