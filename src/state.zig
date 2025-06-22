@@ -7,6 +7,7 @@ const Archive = @import("archive.zig");
 
 const fs = std.fs;
 const Allocator = std.mem.Allocator;
+const print = std.debug.print;
 
 const Self = @This();
 
@@ -32,18 +33,19 @@ pub fn init(allocator: Allocator) !Self {
         .step = try Step.init(args),
         .cfg = cfg,
         .args = args,
-        .loadorder = try LoadOrder.init(allocator, cfg.cwd),
-        .espmap = try EspMap.init(allocator, cfg.cwd),
+        .loadorder = try LoadOrder.init(allocator, cfg.cwdir),
+        .espmap = try EspMap.init(allocator, cfg.cwdir),
     };
 }
 
 pub fn updateConfig(self: *Self) !void {
     const args = self.args[2..];
     if (args.len < 2) {
-        std.debug.print(
-            u.ansi("cwd:     ", "1") ++ u.ansi("{s}\n", "93") ++
-                u.ansi("gamedir: ", "1") ++ u.ansi("{s}\n", "93"),
-            .{ self.cfg.cwd_path, self.cfg.game_dir },
+        print(
+            u.ansi("cwd:       ", "1") ++ u.ansi("{s}\n", "93") ++
+                u.ansi("gamedir:   ", "1") ++ u.ansi("{s}\n", "93") ++
+                u.ansi("gamedata:  ", "1") ++ u.ansi("{s}\n", "93"),
+            .{ self.cfg.cwd, self.cfg.gamedir, self.cfg.gamedata },
         );
         return;
     }
@@ -53,22 +55,33 @@ pub fn updateConfig(self: *Self) !void {
         const key = args[i];
         const val = args[i + 1];
         const v = std.mem.trimEnd(u8, val, "/");
-        std.debug.print(u.ansi("{s}: ", "1") ++ u.ansi("{s}\n", "93"), .{ key, v });
+        print(u.ansi("{s}: ", "1") ++ u.ansi("{s}\n", "93"), .{ key, v });
 
         if (std.mem.eql(u8, key, "cwd")) {
-            self.cfg.cwd_path = v;
-            self.cfg.cwd = if (v.len == 0) fs.cwd() else try fs.cwd().openDir(v, .{});
+            self.cfg.cwd = v;
+            self.cfg.cwdir = if (v.len == 0) fs.cwd() else try fs.cwd().openDir(v, .{});
         } else if (std.mem.eql(u8, key, "gamedir")) {
-            self.cfg.game_dir = v;
+            self.cfg.gamedir = v;
+        } else if (std.mem.eql(u8, key, "gamedata")) {
+            self.cfg.gamedata = v;
         }
     }
+}
+
+pub fn isMissingConfig(self: Self) bool {
+    if (self.step != .set and self.cfg.gamedata.len == 0 and self.cfg.gamedir.len == 0) {
+        print(u.ansi("You need to set the gamedata and gamedir directories first\n", "1"), .{});
+        showUsage(self.args);
+        return true;
+    }
+    return false;
 }
 
 pub fn installMods(self: *Self) !void {
     var arena = std.heap.ArenaAllocator.init(self.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    var mods_dir = try self.cfg.cwd.openDir(u.mods_dir, .{ .iterate = true });
+    var mods_dir = try self.cfg.cwdir.openDir(u.mods_dir, .{ .iterate = true });
     defer mods_dir.close();
     var mods = mods_dir.iterate();
 
@@ -84,38 +97,46 @@ pub fn installMods(self: *Self) !void {
         const is_inflated = u.dirExists(inflated_path);
 
         if (!is_inflated or !esp_cached) {
-            std.debug.print(u.ansi("Processing mod: ", "1") ++ u.ansi("{s}\n", "92"), .{inflated_path});
+            print(u.ansi("Processing mod: ", "1") ++ u.ansi("{s}\n", "92"), .{inflated_path});
             var reader = try Archive.open(in_path, stem);
             try self.loadorder.appendMod(stem, true);
             while (reader.nextEntry()) |entry| {
-                const name = entry.pathName();
+                if (entry.fileType() != .regular) continue;
+                var out_path = entry.pathName();
+                if (std.ascii.eqlIgnoreCase(out_path, "fomod/moduleconfig.xml")) {
+                    out_path = try std.ascii.allocLowerString(allocator, out_path);
+                }
 
-                if (!is_inflated) try reader.extractToFile(self.*, 2, entry, inflated_path);
+                if (!is_inflated) try reader.extractToFile(self.*, 2, out_path, inflated_path);
                 if (esp_cached) continue;
-                try self.espmap.appendEsp(stem, name);
+                try self.espmap.appendEsp(stem, out_path);
             }
             try reader.close();
         }
 
-        const fomod_file = try fs.path.join(allocator, &[_][]const u8{ inflated_path, "fomod", "ModuleConfig.xml" });
+        const fomod_file = try fs.path.join(allocator, &[_][]const u8{ inflated_path, "fomod", "moduleconfig.xml" });
         const data_dir = try fs.path.join(allocator, &[_][]const u8{ inflated_path, "Data" });
 
-        const has_fomod = if (fs.cwd().statFile(fomod_file)) |_| true else |_| false;
-        const has_data = u.dirExists(data_dir);
+        const has_fomod = u.fileExists(fomod_file);
 
-        const install_path = if (has_fomod or has_data)
+        const install_path = if (u.fileExists(fomod_file) or u.dirExists(data_dir))
             try self.join(allocator, .{ u.installs_dir, stem })
         else
             try self.join(allocator, .{ u.installs_dir, stem, "Data" });
 
         if (u.dirExists(install_path)) continue;
 
-        std.debug.print(u.ansi("Installing mod: ", "1") ++ u.ansi("{s}\n", "92"), .{install_path});
+        print(u.ansi("Installing mod: ", "1") ++ u.ansi("{s}\n", "92"), .{install_path});
         if (has_fomod) {
             var fomod = try Fomod.init(allocator, fomod_file, inflated_path, install_path);
             try fomod.runInstaller();
         } else {
             try u.symlinkRecursive(self.allocator, 2, inflated_path, install_path);
+            const skse_path = try fs.path.join(allocator, &[_][]const u8{ install_path, "skse64_loader.exe" });
+            if (u.fileExists(skse_path)) {
+                const launcher_path = try fs.path.join(allocator, &[_][]const u8{ install_path, "SkyrimSELauncher.exe" });
+                try u.symlinkFile(2, skse_path, launcher_path);
+            }
         }
     }
 
@@ -125,14 +146,19 @@ pub fn installMods(self: *Self) !void {
 }
 
 pub fn writePluginsTxt(self: Self) !void {
-    var plugins = try self.cfg.cwd.createFile("Plugins.txt", .{});
+    const path = try fs.path.join(self.allocator, &[_][]const u8{ self.cfg.gamedata, "Plugins.txt" });
+    defer self.allocator.free(path);
+    var plugins = try fs.createFileAbsolute(path, .{});
     defer plugins.close();
     const w = plugins.writer();
 
     var it = self.loadorder.mods.iterator();
     while (it.next()) |entry| {
         if (!entry.value_ptr.*) continue;
-        try std.fmt.format(w, "*{s}\n", .{entry.key_ptr.*});
+        const esps = self.espmap.map.get(entry.key_ptr.*) orelse continue;
+        for (esps.items) |esp| {
+            try std.fmt.format(w, "*{s}\n", .{esp});
+        }
     }
 }
 
@@ -141,14 +167,11 @@ pub fn writeMountScripts(self: @This()) !void {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const orig_path = try u.escapeShellArg(allocator, try std.fmt.allocPrint(allocator, "{s}.orig", .{self.cfg.game_dir}));
-
-    if (u.makeRelativeToCwd(allocator, try self.join(allocator, .{"overlay"}))) |p|
-        try u.nukeDir(p);
+    const orig_path = try u.escapeShellArg(allocator, try std.fmt.allocPrint(allocator, "{s}.orig", .{self.cfg.gamedir}));
 
     const upper_path = try u.escapeShellArg(allocator, try self.join(allocator, .{ "overlay", "upper" }));
     const work_path = try u.escapeShellArg(allocator, try self.join(allocator, .{ "overlay", "work" }));
-    const merged_path = try u.escapeShellArg(allocator, self.cfg.game_dir);
+    const merged_path = try u.escapeShellArg(allocator, self.cfg.gamedir);
 
     var mount_buf = std.ArrayList(u8).init(allocator);
     const mount_w = mount_buf.writer();
@@ -188,13 +211,14 @@ pub fn writeMountScripts(self: @This()) !void {
     try unmount_w.print("sudo umount {s}\n", .{merged_path});
     try unmount_w.print("sudo rm -rf {s}\n", .{merged_path});
     try unmount_w.print("mv \\\n{s} \\\n{s}\n", .{ orig_path, merged_path });
+    try unmount_w.print("sudo rm -rf {s}\n", .{try u.escapeShellArg(allocator, try self.join(allocator, .{"overlay"}))});
 
     const mount_sh = try self.join(allocator, .{"mount.sh"});
     try writeFile(mount_sh, mount_buf.items);
     const unmount_sh = try self.join(allocator, .{"unmount.sh"});
     try writeFile(unmount_sh, unmount_buf.items);
 
-    std.debug.print("Mount/unmount scripts created.\n" ++
+    print("Mount/unmount scripts created.\n" ++
         "  Mount with " ++ u.ansi("{s}\n", "1;93") ++
         "  Unmount with " ++ u.ansi("{s}\n", "1;93"), .{ mount_sh, unmount_sh });
 }
@@ -226,17 +250,19 @@ fn findOption(args: [][:0]u8, comptime name: []const u8) ?[]const u8 {
     return null;
 }
 
-fn showUsage(args: [][:0]u8) void {
-    std.debug.print(u.ansi("Usage: ", "1") ++ "{s} " ++ u.ansi("[steps] ", "92") ++
+pub fn showUsage(args: [][:0]u8) void {
+    print(u.ansi("Usage: ", "1") ++ "{s} " ++ u.ansi("[steps] ", "92") ++
         "\n" ++
         u.ansi("Steps:\n  ", "92") ++
+        u.ansi("help               Show this message\n  ", "92") ++
+        u.ansi("set ", "92") ++ u.ansi("[Key] [Value]  ", "93") ++ u.ansi("Sets config key to value\n  ", "92") ++
         u.ansi("install            Install all enabled mods\n  ", "92") ++
         u.ansi("mount              Generate shell scripts to mount overlay over Skyrim directory\n  ", "92") ++
-        u.ansi("set ", "92") ++ u.ansi("[Key] [Value]  ", "93") ++ u.ansi("Sets config key to value\n", "92") ++
         "\n" ++
         u.ansi("Key:\n  ", "93") ++
-        u.ansi("cwd [dir]          Working directory where mods will be managed\n  ", "93") ++
-        u.ansi("gamedir [path]     Game root directory\n  ", "93") ++
+        u.ansi("cwd [dir]         Working directory where mods will be managed\n  ", "93") ++
+        u.ansi("gamedir [dir]     Game root directory\n  ", "93") ++
+        u.ansi("gamedata [dir]    Game data directory (normally in AppData)\n  ", "93") ++
         "\n", .{
         args[0],
     });
@@ -245,7 +271,7 @@ fn showUsage(args: [][:0]u8) void {
 fn join(self: Self, allocator: ?Allocator, paths: anytype) ![]const u8 {
     const alloc = allocator orelse self.allocator;
     var ps: [paths.len + 1][]const u8 = undefined;
-    ps[0] = try fs.cwd().realpathAlloc(alloc, self.cfg.cwd_path);
+    ps[0] = try fs.cwd().realpathAlloc(alloc, self.cfg.cwd);
     inline for (paths, 1..) |p, i| {
         ps[i] = p;
     }
@@ -254,15 +280,16 @@ fn join(self: Self, allocator: ?Allocator, paths: anytype) ![]const u8 {
 }
 
 const Step = enum {
+    help,
+    set,
     install,
     mount,
-    set,
 
     pub fn init(args: [][:0]u8) !Step {
         inline for (@typeInfo(Step).@"enum".fields) |f| {
             if (std.mem.eql(u8, args[1], f.name)) return @field(Step, f.name);
         }
-        std.debug.print(u.ansi("Unknown step: ", "1") ++ "{s}\n", .{args[1]});
+        print(u.ansi("Unknown step: ", "1") ++ "{s}\n", .{args[1]});
         showUsage(args);
         return error.UnknownStep;
     }
@@ -270,19 +297,22 @@ const Step = enum {
 
 const Config = struct {
     allocator: Allocator,
-    cwd_path: []const u8 = "",
-    cwd: fs.Dir = fs.cwd(),
-    game_dir: []const u8 = "",
     contents: []const u8 = "",
+    cwdir: fs.Dir = fs.cwd(),
+    cwd: []const u8 = "",
+    gamedir: []const u8 = "",
+    gamedata: []const u8 = "",
 
-    pub fn init(allocator: Allocator, cwd_path: []const u8, game_dir: []const u8, contents: []const u8) !@This() {
+    pub fn init(allocator: Allocator, cwd_path: []const u8, game_dir: []const u8, gamedata: []const u8, contents: []const u8) !@This() {
         const cwd = if (cwd_path.len == 0) fs.cwd() else try fs.cwd().openDir(cwd_path, .{});
+
         return @This(){
             .allocator = allocator,
-            .cwd_path = cwd_path,
-            .cwd = cwd,
-            .game_dir = game_dir,
             .contents = contents,
+            .cwdir = cwd,
+            .cwd = cwd_path,
+            .gamedir = game_dir,
+            .gamedata = gamedata,
         };
     }
 
@@ -301,6 +331,7 @@ const Config = struct {
 
         var cwd: ?[]const u8 = null;
         var game_dir: ?[]const u8 = null;
+        var gamedata: ?[]const u8 = null;
 
         var lines = std.mem.splitScalar(u8, contents, '\n');
         while (lines.next()) |line| {
@@ -315,14 +346,19 @@ const Config = struct {
                     cwd = value;
                 } else if (std.mem.eql(u8, key, "gamedir")) {
                     game_dir = value;
+                } else if (std.mem.eql(u8, key, "gamedata")) {
+                    gamedata = value;
                 }
             }
         }
 
-        const final_cwd = cwd orelse return error.MissingCwdField;
-        const final_game_dir = game_dir orelse return error.MissingGameDirField;
-
-        return try @This().init(allocator, final_cwd, final_game_dir, contents);
+        return try @This().init(
+            allocator,
+            cwd orelse return error.MissingCwdField,
+            game_dir orelse return error.MissingGameDirField,
+            gamedata orelse return error.MissingGameDataField,
+            contents,
+        );
     }
 
     pub fn serialize(self: @This()) !void {
@@ -330,7 +366,10 @@ const Config = struct {
         defer file.close();
 
         const writer = file.writer();
-        try writer.print("cwd={s}\n", .{self.cwd_path});
-        try writer.print("gamedir={s}\n", .{self.game_dir});
+        try writer.print(
+            \\cwd={s}
+            \\gamedir={s}
+            \\gamedata={s}
+        , .{ self.cwd, self.gamedir, self.gamedata });
     }
 };

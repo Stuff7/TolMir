@@ -167,18 +167,6 @@ pub fn makeRelativeToCwd(allocator: std.mem.Allocator, abs: []const u8) ?[]const
     return null;
 }
 
-pub fn nukeDir(path: []const u8) !void {
-    var cwd = std.fs.cwd();
-
-    var result = cwd.openDir(path, .{}) catch |err| {
-        if (err == error.FileNotFound) return;
-        return err;
-    };
-    defer result.close();
-
-    try cwd.deleteTree(path);
-}
-
 pub fn symlinkRecursive(
     allocator: Allocator,
     indent: ?comptime_int,
@@ -213,10 +201,7 @@ pub fn symlinkRecursive(
                         " " ** (ind + 2) ++ ansi("{s}\n", "92"), .{ source_full_path, dest_full_path });
                 }
 
-                const source_absolute = try fs.cwd().realpathAlloc(allocator, source_full_path);
-                defer allocator.free(source_absolute);
-
-                fs.cwd().symLink(source_absolute, dest_full_path, .{}) catch |err| switch (err) {
+                fs.cwd().symLink(source_full_path, dest_full_path, .{}) catch |err| switch (err) {
                     error.PathAlreadyExists => {},
                     else => return err,
                 };
@@ -233,21 +218,17 @@ pub fn symlinkRecursive(
 }
 
 pub fn symlinkFile(
-    allocator: Allocator,
     indent: comptime_int,
     src_path: []const u8,
     dst_path: []const u8,
 ) !void {
     try fs.cwd().makePath(fs.path.dirname(dst_path) orelse ".");
 
-    const source_absolute = try fs.cwd().realpathAlloc(allocator, src_path);
-    defer allocator.free(source_absolute);
-
     print(" " ** indent ++ ansi("Symlink:\n", "1") ++
         " " ** (indent + 2) ++ ansi("{s}\n", "96") ++
-        " " ** (indent + 2) ++ ansi("{s}\n", "92"), .{ source_absolute, dst_path });
+        " " ** (indent + 2) ++ ansi("{s}\n", "92"), .{ src_path, dst_path });
 
-    fs.cwd().symLink(source_absolute, dst_path, .{}) catch |err| switch (err) {
+    fs.cwd().symLink(src_path, dst_path, .{}) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
@@ -284,6 +265,10 @@ pub fn sanitizePath(raw_path: []const u8) ![]const u8 {
 pub fn dirExists(path: []const u8) bool {
     const stat = fs.cwd().statFile(path) catch return false;
     return stat.kind == .directory;
+}
+
+pub fn fileExists(path: []const u8) bool {
+    return if (fs.cwd().statFile(path)) |_| true else |_| false;
 }
 
 pub fn initEnum(T: type, input: []const u8, default: anytype) !T {

@@ -8,6 +8,7 @@ const c = @cImport({
 
 const fs = std.fs;
 const Allocator = std.mem.Allocator;
+const print = std.debug.print;
 
 const Self = @This();
 
@@ -45,10 +46,8 @@ pub fn skipEntryData(self: Self) void {
     _ = c.archive_read_data_skip(self.archive);
 }
 
-pub fn extractToFile(self: Self, state: State, indent: comptime_int, entry: Entry, base: []const u8) !void {
-    if (entry.fileType() != .regular) return;
-
-    const name = try u.sanitizePath(entry.pathName());
+pub fn extractToFile(self: Self, state: State, indent: comptime_int, out_path: []const u8, base: []const u8) !void {
+    const name = try u.sanitizePath(out_path);
     const path = try fs.path.join(state.allocator, &[_][]const u8{ base, name });
     defer state.allocator.free(path);
 
@@ -60,7 +59,7 @@ pub fn extractToFile(self: Self, state: State, indent: comptime_int, entry: Entr
     const writer = out.writer();
     var buffer: [8192]u8 = undefined;
 
-    std.debug.print(" " ** indent ++ u.ansi("Inflating:\n", "1") ++
+    print(" " ** indent ++ u.ansi("Inflating:\n", "1") ++
         " " ** (indent + 2) ++ u.ansi("{s}\n", "93") ++
         " " ** (indent + 2) ++ u.ansi("{s}\n", "94"), .{ name, path });
     while (true) {
@@ -76,7 +75,7 @@ fn assert(self: Self, err: c_int) !void {
 
     const msg = c.archive_error_string(self.archive);
     if (@intFromPtr(msg) != 0) {
-        std.debug.print("[libarchive]: {s}\n", .{std.mem.span(msg)});
+        print("[libarchive]: {s}\n", .{std.mem.span(msg)});
     }
 
     return error.ArchiveError;
