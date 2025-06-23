@@ -276,9 +276,6 @@ pub fn sanitizePath(raw_path: []const u8) ![]const u8 {
         if (part.len == 0) {
             return error.MalformedPath;
         }
-        if (part[0] == '.') {
-            return error.HiddenDotfileBlocked;
-        }
     }
 
     return raw_path;

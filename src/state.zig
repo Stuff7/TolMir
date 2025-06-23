@@ -234,6 +234,8 @@ pub fn writeMountScripts(self: @This()) !void {
     const unmount_sh = try self.join(allocator, .{"unmount.sh"});
     try writeFile(unmount_sh, unmount_buf.items);
 
+    try self.writePluginsTxt();
+
     print("Mount/unmount scripts created.\n" ++
         "  Mount with " ++ u.ansi("{s}\n", "1;93") ++
         "  Unmount with " ++ u.ansi("{s}\n", "1;93"), .{ mount_sh, unmount_sh });
