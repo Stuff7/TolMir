@@ -303,3 +303,15 @@ pub fn initEnum(T: type, input: []const u8, default: anytype) !T {
 
     return default;
 }
+
+pub fn isGameDir(path: []const u8) bool {
+    const dirs = [_][]const u8{
+        "data", "skse", "textures", "meshes", "interface", "scripts", "plugins",
+    };
+
+    inline for (dirs) |dir| {
+        if (std.ascii.eqlIgnoreCase(path, dir)) return true;
+    }
+
+    return false;
+}

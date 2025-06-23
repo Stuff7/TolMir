@@ -100,7 +100,7 @@ pub fn installMods(self: *Self) !void {
             print(u.ansi("Processing mod: ", "1") ++ u.ansi("{s}\n", "92"), .{inflated_path});
             var root = try Archive.getRootDir(allocator, in_path, stem);
             if (root) |r| {
-                if (std.mem.eql(u8, r, "Data")) root = null;
+                if (u.isGameDir(r)) root = null;
             }
 
             var reader = try Archive.open(in_path, stem);
@@ -109,8 +109,13 @@ pub fn installMods(self: *Self) !void {
                 if (entry.fileType() != .regular) continue;
                 var out_path = entry.pathName();
                 if (root) |r| out_path = out_path[r.len + 1 ..];
+
+                const maybe_data = out_path[0 .. "Data".len + 1];
+
                 if (std.ascii.eqlIgnoreCase(out_path, "fomod/moduleconfig.xml")) {
                     out_path = try std.ascii.allocLowerString(allocator, out_path);
+                } else if (std.ascii.eqlIgnoreCase(maybe_data, "data/") and !std.mem.eql(u8, maybe_data, "Data/")) {
+                    out_path = try std.fmt.allocPrintZ(allocator, "Data/{s}", .{out_path[maybe_data.len..]});
                 }
 
                 if (!is_inflated) try reader.extractToFile(self.*, 2, out_path, inflated_path);
