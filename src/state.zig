@@ -180,6 +180,7 @@ pub fn writeMountScripts(self: @This()) !void {
 
     const orig_path = try u.escapeShellArg(allocator, try std.fmt.allocPrint(allocator, "{s}.orig", .{self.cfg.gamedir}));
 
+    const stg_dir = try u.escapeShellArg(allocator, try self.join(allocator, .{"staging"}));
     const upper_path = try u.escapeShellArg(allocator, try self.join(allocator, .{ "overlay", "upper" }));
     const work_path = try u.escapeShellArg(allocator, try self.join(allocator, .{ "overlay", "work" }));
     const merged_path = try u.escapeShellArg(allocator, self.cfg.gamedir);
@@ -192,11 +193,12 @@ pub fn writeMountScripts(self: @This()) !void {
 
     try mount_w.writeAll("#!/bin/bash\n\nset -e\n\n");
     try mount_w.print("mv \\\n{s} \\\n{s}\n\n", .{ merged_path, orig_path });
-    try mount_w.print("mkdir -p \\\n{s} \\\n{s} \\\n{s}\n\n", .{
-        upper_path, work_path, merged_path,
+    try mount_w.print("mkdir -p \\\n{s} \\\n{s} \\\n{s} \\\n{s}\n\n", .{
+        upper_path, work_path, merged_path, stg_dir,
     });
 
     try mount_w.writeAll("sudo mount -t overlay overlay -o \\\n");
+    try mount_w.print("lowerdir+={s},\\\n", .{stg_dir});
 
     const keys = self.loadorder.mods.keys();
     const vals = self.loadorder.mods.values();
@@ -222,7 +224,10 @@ pub fn writeMountScripts(self: @This()) !void {
     try unmount_w.print("sudo umount {s}\n", .{merged_path});
     try unmount_w.print("sudo rm -rf {s}\n", .{merged_path});
     try unmount_w.print("mv \\\n{s} \\\n{s}\n", .{ orig_path, merged_path });
-    try unmount_w.print("sudo rm -rf {s}\n", .{work_path});
+
+    const overlay_path = try u.escapeShellArg(allocator, try self.join(allocator, .{"overlay"}));
+    try unmount_w.print("cp -a {s}/* {s}\n", .{ upper_path, stg_dir });
+    try unmount_w.print("sudo rm -rf {s}\n", .{overlay_path});
 
     const mount_sh = try self.join(allocator, .{"mount.sh"});
     try writeFile(mount_sh, mount_buf.items);
