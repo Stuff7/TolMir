@@ -222,7 +222,7 @@ pub fn writeMountScripts(self: @This()) !void {
     try unmount_w.print("sudo umount {s}\n", .{merged_path});
     try unmount_w.print("sudo rm -rf {s}\n", .{merged_path});
     try unmount_w.print("mv \\\n{s} \\\n{s}\n", .{ orig_path, merged_path });
-    try unmount_w.print("sudo rm -rf {s}\n", .{try u.escapeShellArg(allocator, try self.join(allocator, .{"overlay"}))});
+    try unmount_w.print("sudo rm -rf {s}\n", .{work_path});
 
     const mount_sh = try self.join(allocator, .{"mount.sh"});
     try writeFile(mount_sh, mount_buf.items);

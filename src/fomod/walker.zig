@@ -533,18 +533,16 @@ fn install(self: Walker) !void {
     print("\n" ++ u.ansi("=== Installation Process ===", "1;36") ++ "\n", .{});
     if (self.selected_files.items.len > 0) {
         for (self.selected_files.items) |file| {
+            const src = try std.fs.path.join(
+                self.allocator,
+                &[_][]const u8{ self.in_dir, file.source },
+            );
+            defer self.allocator.free(src);
+
             if (file.is_folder) {
-                const src = try std.fs.path.join(
-                    self.allocator,
-                    &[_][]const u8{ self.in_dir, file.source },
-                );
-                defer self.allocator.free(src);
                 print(u.ansi("📁 Installing folder: ", "1;34") ++ u.ansi("{s}", "1;37"), .{file.source});
                 if (file.destination) |dest| {
-                    const dst = try std.fs.path.join(
-                        self.allocator,
-                        &[_][]const u8{ self.out_dir, dest },
-                    );
+                    const dst = try std.fs.path.join(self.allocator, &[_][]const u8{ self.out_dir, dest });
                     defer self.allocator.free(dst);
                     print(" " ++ u.ansi("to ", "36") ++ u.ansi("{s}\n", "37"), .{dest});
                     try u.symlinkRecursive(self.allocator, 2, src, dst);
@@ -552,10 +550,11 @@ fn install(self: Walker) !void {
             } else {
                 print(u.ansi("📄 Installing file: ", "1;32") ++ u.ansi("{s}", "1;37"), .{file.source});
                 if (file.destination) |dest| {
-                    print(" " ++ u.ansi("to ", "36") ++ u.ansi("{s}", "37"), .{dest});
+                    const dst = try std.fs.path.join(self.allocator, &[_][]const u8{ self.out_dir, dest });
+                    defer self.allocator.free(dst);
+                    print(" " ++ u.ansi("to ", "36") ++ u.ansi("{s}\n", "37"), .{dest});
+                    try u.symlinkFile(2, src, dst);
                 }
-                print("\n", .{});
-                print("   " ++ u.ansi("→ Copy file '", "90") ++ u.ansi("{s}", "37") ++ u.ansi("'", "90") ++ "\n", .{file.source});
             }
         }
         print("\n" ++ u.ansi("✅ Installation completed successfully!", "1;32") ++ "\n", .{});
