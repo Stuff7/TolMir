@@ -545,12 +545,14 @@ fn install(self: Walker) !void {
                     const dst = try std.fs.path.join(self.allocator, &[_][]const u8{ self.out_dir, dest });
                     defer self.allocator.free(dst);
                     print(" " ++ u.ansi("to ", "36") ++ u.ansi("{s}\n", "37"), .{dest});
-                    try u.symlinkRecursive(self.allocator, 2, src, dst);
+                    try u.symlinkRecursive(self.allocator, 2, self.out_dir, src, dst);
                 }
             } else {
                 print(u.ansi("📄 Installing file: ", "1;32") ++ u.ansi("{s}", "1;37"), .{file.source});
                 if (file.destination) |dest| {
-                    const dst = try std.fs.path.join(self.allocator, &[_][]const u8{ self.out_dir, dest });
+                    const dst_full = try std.fs.path.join(self.allocator, &[_][]const u8{ self.out_dir, dest });
+                    defer self.allocator.free(dst_full);
+                    const dst = try u.normalizeModDir(self.allocator, self.out_dir, dst_full);
                     defer self.allocator.free(dst);
                     print(" " ++ u.ansi("to ", "36") ++ u.ansi("{s}\n", "37"), .{dest});
                     try u.symlinkFile(2, src, dst);

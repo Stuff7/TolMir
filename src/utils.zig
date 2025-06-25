@@ -189,30 +189,58 @@ pub fn makeRelativeToCwd(allocator: std.mem.Allocator, abs: []const u8) ?[]const
     return null;
 }
 
+pub fn openDirIgnoreCase(allocator: std.mem.Allocator, path: []const u8, args: fs.Dir.OpenOptions) !std.fs.Dir {
+    const cwd = fs.cwd();
+
+    if (cwd.openDir(path, args)) |dir| {
+        return dir;
+    } else |_| {}
+
+    const parent_path = fs.path.dirname(path) orelse ".";
+    const target_name = fs.path.basename(path);
+
+    var parent_dir = try cwd.openDir(parent_path, .{ .iterate = true });
+    defer parent_dir.close();
+
+    var iterator = parent_dir.iterate();
+    while (try iterator.next()) |entry| {
+        if (entry.kind == .directory and std.ascii.eqlIgnoreCase(entry.name, target_name)) {
+            const full_path = try fs.path.join(allocator, &[_][]const u8{ parent_path, entry.name });
+            defer allocator.free(full_path);
+            return try cwd.openDir(full_path, args);
+        }
+    }
+
+    return error.FileNotFound;
+}
+
 pub fn symlinkRecursive(
     allocator: Allocator,
     indent: ?comptime_int,
+    installs_path: []const u8,
     src_path: []const u8,
     dst_path: []const u8,
 ) !void {
-    try fs.cwd().makePath(src_path);
-
-    var source_dir = try fs.cwd().openDir(src_path, .{ .iterate = true });
+    var source_dir = try openDirIgnoreCase(allocator, src_path, .{ .iterate = true });
     defer source_dir.close();
 
-    try fs.cwd().makePath(dst_path);
+    const root = try normalizeModDir(allocator, installs_path, dst_path);
+    defer allocator.free(root);
+    try fs.cwd().makePath(root);
 
-    var dest_dir = try fs.cwd().openDir(dst_path, .{});
+    var dest_dir = try fs.cwd().openDir(root, .{});
     defer dest_dir.close();
 
     var walker = try source_dir.walk(allocator);
     defer walker.deinit();
 
     while (try walker.next()) |entry| {
-        const source_full_path = try fs.path.join(allocator, &[_][]const u8{ src_path, entry.path });
+        const source_full_path = try source_dir.realpathAlloc(allocator, entry.path);
         defer allocator.free(source_full_path);
 
-        const dest_full_path = try fs.path.join(allocator, &[_][]const u8{ dst_path, entry.path });
+        const dest_full = try fs.path.join(allocator, &[_][]const u8{ root, entry.path });
+        defer allocator.free(dest_full);
+        const dest_full_path = try normalizeModDir(allocator, installs_path, dest_full);
         defer allocator.free(dest_full_path);
 
         switch (entry.kind) {
@@ -239,6 +267,7 @@ pub fn symlinkRecursive(
     }
 }
 
+// TODO: find src_path actual name ignoring casing for the few ModuleConfig.xml that don't respect the casing
 pub fn symlinkFile(
     indent: comptime_int,
     src_path: []const u8,
@@ -311,4 +340,21 @@ pub fn isGameDir(path: []const u8) bool {
     }
 
     return false;
+}
+
+pub fn normalizeModDir(allocator: Allocator, install_path: []const u8, path: []const u8) ![]u8 {
+    var cpy = try std.ArrayList(u8).initCapacity(allocator, path.len);
+    cpy.appendSliceAssumeCapacity(path);
+
+    var root_offset = if (std.mem.startsWith(u8, cpy.items, install_path)) install_path.len else 0;
+    var items = cpy.items[root_offset..];
+
+    if (std.mem.startsWith(u8, items, "/Data")) {
+        root_offset += "/Data".len;
+        items = cpy.items[root_offset..];
+    }
+
+    _ = std.ascii.lowerString(items, items);
+
+    return cpy.toOwnedSlice();
 }

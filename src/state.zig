@@ -2,7 +2,6 @@ const std = @import("std");
 const u = @import("utils.zig");
 const Fomod = @import("fomod/walker.zig");
 const LoadOrder = @import("loadorder.zig");
-const EspMap = @import("espmap.zig");
 const Archive = @import("archive.zig");
 
 const fs = std.fs;
@@ -16,7 +15,6 @@ step: Step,
 cfg: Config,
 args: [][:0]u8,
 loadorder: LoadOrder,
-espmap: EspMap,
 
 pub fn init(allocator: Allocator) !Self {
     const args = try std.process.argsAlloc(allocator);
@@ -34,7 +32,6 @@ pub fn init(allocator: Allocator) !Self {
         .cfg = cfg,
         .args = args,
         .loadorder = try LoadOrder.init(allocator, cfg.cwdir),
-        .espmap = try EspMap.init(allocator, cfg.cwdir),
     };
 }
 
@@ -89,14 +86,12 @@ pub fn installMods(self: *Self) !void {
         const stem = fs.path.stem(mod.name);
         if (mod.kind != .file) continue;
 
-        const esp_cached = self.espmap.map.contains(stem);
-
         const in_path = try self.join(allocator, .{ u.mods_dir, mod.name });
 
         const inflated_path = try self.join(allocator, .{ u.inflated_dir, stem });
         const is_inflated = u.dirExists(inflated_path);
 
-        if (!is_inflated or !esp_cached) {
+        if (!is_inflated) {
             print(u.ansi("Processing mod: ", "1") ++ u.ansi("{s}\n", "92"), .{inflated_path});
             var root = try Archive.getRootDir(allocator, in_path, stem);
             if (root) |r| {
@@ -119,8 +114,6 @@ pub fn installMods(self: *Self) !void {
                 }
 
                 if (!is_inflated) try reader.extractToFile(self.*, 2, out_path, inflated_path);
-                if (esp_cached) continue;
-                try self.espmap.appendEsp(stem, out_path);
             }
             try reader.close();
         }
@@ -142,7 +135,7 @@ pub fn installMods(self: *Self) !void {
             var fomod = try Fomod.init(allocator, fomod_file, inflated_path, install_path);
             try fomod.runInstaller();
         } else {
-            try u.symlinkRecursive(self.allocator, 2, inflated_path, install_path);
+            try u.symlinkRecursive(self.allocator, 2, install_path, inflated_path, install_path);
             const skse_path = try fs.path.join(allocator, &[_][]const u8{ install_path, "skse64_loader.exe" });
             if (u.fileExists(skse_path)) {
                 const launcher_path = try fs.path.join(allocator, &[_][]const u8{ install_path, "SkyrimSELauncher.exe" });
@@ -152,7 +145,6 @@ pub fn installMods(self: *Self) !void {
     }
 
     try self.loadorder.serialize();
-    try self.espmap.serialize();
     try self.writePluginsTxt();
 }
 
@@ -166,9 +158,15 @@ pub fn writePluginsTxt(self: Self) !void {
     var it = self.loadorder.mods.iterator();
     while (it.next()) |entry| {
         if (!entry.value_ptr.*) continue;
-        const esps = self.espmap.map.get(entry.key_ptr.*) orelse continue;
-        for (esps.items) |esp| {
-            try std.fmt.format(w, "*{s}\n", .{esp});
+        const dirpath = try self.join(null, .{ u.installs_dir, entry.key_ptr.*, "Data" });
+        defer self.allocator.free(dirpath);
+
+        var dir = fs.openDirAbsolute(dirpath, .{ .iterate = true }) catch continue;
+        defer dir.close();
+        var dit = dir.iterate();
+        while (try dit.next()) |e| {
+            if ((e.kind != .sym_link and e.kind != .file) or !std.mem.endsWith(u8, e.name, ".esp")) continue;
+            try std.fmt.format(w, "*{s}\n", .{fs.path.basename(e.name)});
         }
     }
 }
@@ -181,6 +179,7 @@ pub fn writeMountScripts(self: @This()) !void {
     const orig_path = try u.escapeShellArg(allocator, try std.fmt.allocPrint(allocator, "{s}.orig", .{self.cfg.gamedir}));
 
     const stg_dir = try u.escapeShellArg(allocator, try self.join(allocator, .{"staging"}));
+    const lower_dir = try u.escapeShellArg(allocator, try self.join(allocator, .{"merged"}));
     const upper_path = try u.escapeShellArg(allocator, try self.join(allocator, .{ "overlay", "upper" }));
     const work_path = try u.escapeShellArg(allocator, try self.join(allocator, .{ "overlay", "work" }));
     const merged_path = try u.escapeShellArg(allocator, self.cfg.gamedir);
@@ -193,29 +192,27 @@ pub fn writeMountScripts(self: @This()) !void {
 
     try mount_w.writeAll("#!/bin/bash\n\nset -e\n\n");
     try mount_w.print("mv \\\n{s} \\\n{s}\n\n", .{ merged_path, orig_path });
-    try mount_w.print("mkdir -p \\\n{s} \\\n{s} \\\n{s} \\\n{s}\n\n", .{
-        upper_path, work_path, merged_path, stg_dir,
+    try mount_w.print("rm -rf {s}\n", .{lower_dir});
+    try mount_w.print("mkdir -p \\\n{s} \\\n{s} \\\n{s} \\\n{s} \\\n{s}\n\n", .{
+        upper_path, work_path, merged_path, stg_dir, lower_dir,
     });
 
-    try mount_w.writeAll("sudo mount -t overlay overlay -o \\\n");
-    try mount_w.print("lowerdir+={s},\\\n", .{stg_dir});
-
+    try mount_w.writeAll("cp -a \\\n");
     const keys = self.loadorder.mods.keys();
     const vals = self.loadorder.mods.values();
-    var i = keys.len;
-    while (i > 0) {
-        i -= 1;
-        if (!vals[i]) continue;
-
-        const path = try u.escapeShellArg(
-            allocator,
-            try self.join(allocator, .{ u.installs_dir, keys[i] }),
-        );
-
-        try mount_w.print("lowerdir+={s},\\\n", .{path});
+    for (keys, vals) |k, v| {
+        if (!v) continue;
+        try mount_w.print("{s}/* \\\n", .{
+            try u.escapeShellArg(allocator, try self.join(allocator, .{ u.installs_dir, k })),
+        });
     }
+    try mount_w.print("{s}/* \\\n", .{stg_dir});
+    try mount_w.print("{s}\n\n", .{lower_dir});
 
-    try mount_w.print("lowerdir+={s},\\\n", .{orig_path});
+    try mount_w.print(
+        "sudo mount -t overlay overlay -o \\\nlowerdir+={s},\\\nlowerdir+={s},\\\n",
+        .{ lower_dir, orig_path },
+    );
     try mount_w.print("upperdir={s},\\\n", .{upper_path});
     try mount_w.print("workdir={s} \\\n", .{work_path});
     try mount_w.print("{s}\n", .{merged_path});
@@ -227,6 +224,7 @@ pub fn writeMountScripts(self: @This()) !void {
 
     const overlay_path = try u.escapeShellArg(allocator, try self.join(allocator, .{"overlay"}));
     try unmount_w.print("cp -a {s}/* {s}\n", .{ upper_path, stg_dir });
+    try unmount_w.print("rm -rf {s}\n", .{lower_dir});
     try unmount_w.print("sudo rm -rf {s}\n", .{overlay_path});
 
     const mount_sh = try self.join(allocator, .{"mount.sh"});
@@ -255,7 +253,6 @@ pub fn deinit(self: *Self) !void {
     try self.cfg.serialize();
     self.cfg.deinit();
     std.process.argsFree(self.allocator, self.args);
-    self.espmap.deinit();
     self.loadorder.deinit();
 }
 
@@ -286,10 +283,11 @@ pub fn showUsage(args: [][:0]u8) void {
     });
 }
 
-fn join(self: Self, allocator: ?Allocator, paths: anytype) ![]const u8 {
+fn join(self: Self, allocator: ?Allocator, paths: anytype) ![:0]const u8 {
     const alloc = allocator orelse self.allocator;
     var ps: [paths.len + 1][]const u8 = undefined;
     ps[0] = try fs.cwd().realpathAlloc(alloc, self.cfg.cwd);
+    defer alloc.free(ps[0]);
     inline for (paths, 1..) |p, i| {
         ps[i] = p;
     }

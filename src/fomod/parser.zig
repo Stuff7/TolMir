@@ -176,7 +176,9 @@ fn parseFileItem(file_list: *FileList, node: xml.Node, is_file: bool) !void {
     var system = FileList.SystemItemAttributes{};
 
     if (node.getAttribute("destination")) |dest_attr| {
-        system.destination = try std.fs.path.join(file_list.allocator, &[_][]const u8{ "Data", dest_attr });
+        const dest = try u.replacePathSep(file_list.allocator, dest_attr);
+        defer file_list.allocator.free(dest);
+        system.destination = try std.fs.path.join(file_list.allocator, &[_][]const u8{ "Data", dest });
     }
 
     if (node.getAttribute("alwaysInstall")) |always_attr| {
