@@ -30,7 +30,8 @@ pub fn init(allocator: std.mem.Allocator, path: []const u8) !Self {
 
     var node = doc;
     while (node != null and c.mxmlGetType(node) != c.MXML_TYPE_ELEMENT) {
-        node = c.mxmlGetNextSibling(node);
+        const n = Node{ .node = node.? };
+        node = if (n.getType() == .directive) c.mxmlGetFirstChild(node) else c.mxmlGetNextSibling(node);
     }
 
     if (node) |root| return Self{ .root = Node{ .node = root } };

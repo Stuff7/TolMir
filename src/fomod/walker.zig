@@ -109,7 +109,7 @@ fn checkDependencies(self: Walker, deps: CompositeDependency) bool {
 fn checkSingleDependency(self: Walker, dep: CompositeDependency.DependencyType) bool {
     switch (dep) {
         .File => |file_dep| {
-            print("  " ++ u.ansi("Checking file dependency: ", "36") ++ u.ansi("{s}", "37") ++ u.ansi(" (needs: ", "36") ++ u.ansi("{s}", "33") ++ u.ansi(")", "36") ++ "\n", .{ file_dep.file, @tagName(file_dep.state) });
+            print("  " ++ u.ansi("File dependency: ", "36") ++ u.ansi("{s}", "37") ++ u.ansi(" (needs: ", "36") ++ u.ansi("{s}", "33") ++ u.ansi(")", "36") ++ "\n", .{ file_dep.file, @tagName(file_dep.state) });
             // TODO: check if the file exists and is active/inactive
             return true;
         },
@@ -202,16 +202,21 @@ fn processGroups(self: *Walker, groups: StepList.GroupList) !void {
     }
 }
 
-fn printOptions(self: Walker, group: StepList.Group) !void {
+fn printOptions(self: Walker, group: StepList.Group, selections: []usize) !void {
     for (group.plugins.plugins.items, 0..) |plugin, idx| {
         const type_info = self.getPluginTypeInfo(plugin);
-        if (type_info.selectable) {
-            print(
-                u.ansi("  [{d}] ", "1;36") ++ u.ansi("{s} ", "32") ++ u.ansi("{s}\n", "1;37"),
-                .{ idx, type_info.plugin_type.marker(), plugin.name },
-            );
+        print(
+            u.ansi("  [{d}] ", "1;36") ++ u.ansi("{s} ", "32"),
+            .{ idx, type_info.plugin_type.marker() },
+        );
+
+        if (std.mem.indexOfScalar(usize, selections, idx)) |_| {
+            print(u.ansi("{s}", "1;93;4") ++ "\n", .{plugin.name});
+        } else {
+            print(u.ansi("{s}\n", "1;37"), .{plugin.name});
         }
     }
+    print(u.ansi("Selected:", "1;32") ++ " {any}\n", .{selections});
 }
 
 fn getPluginTypeInfo(self: Walker, plugin: StepList.Plugin) struct { plugin_type: StepList.PluginTypeEnum, selectable: bool } {
@@ -304,7 +309,7 @@ fn getInputWithValidation(
     config: InputConfig,
 ) !void {
     config.printInfo(group);
-    try self.printOptions(group);
+    try self.printOptions(group, selections.items);
 
     while (true) {
         print(u.ansi("> ", "1;32"), .{});
@@ -314,7 +319,7 @@ fn getInputWithValidation(
                 u.clearTerminal();
                 self.printModuleInfo();
                 config.printInfo(group);
-                try self.printOptions(group);
+                try self.printOptions(group, selections.items);
             },
             .empty => {
                 if (config.allow_empty and selections.items.len >= config.min_selections) {
@@ -336,6 +341,7 @@ fn getInputWithValidation(
                         }
                     }
                 }
+                print(u.ansi("Selected:", "1;32") ++ " {any}\n", .{selections.items});
             },
             .err => |msg| {
                 print(u.ansi("{s}", "1;31") ++ "\n", .{msg});
@@ -368,10 +374,10 @@ fn validateAndAddSelection(
         return false;
     }
 
-    for (selections.items) |sel| {
+    for (selections.items, 0..) |sel, idx| {
         if (sel == input) {
-            print(u.ansi("Deselecting idx {}.", "1;33") ++ "\n", .{sel});
-            _ = selections.orderedRemove(sel);
+            print(u.ansi("Removed idx {}", "1;33") ++ "\n", .{sel});
+            _ = selections.orderedRemove(idx);
             return false;
         }
     }

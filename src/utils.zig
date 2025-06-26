@@ -130,7 +130,6 @@ pub fn replaceXmlEntities(allocator: std.mem.Allocator, input: []const u8) ![]co
         replacement: []const u8,
     }{
         .{ .entity = "&apos;", .replacement = "'" },
-        .{ .entity = "&quot;", .replacement = "\"" },
         .{ .entity = "&lt;", .replacement = "<" },
         .{ .entity = "&gt;", .replacement = ">" },
     };
