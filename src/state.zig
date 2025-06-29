@@ -165,7 +165,10 @@ pub fn writePluginsTxt(self: Self) !void {
         defer dir.close();
         var dit = dir.iterate();
         while (try dit.next()) |e| {
-            if ((e.kind != .sym_link and e.kind != .file) or !std.mem.endsWith(u8, e.name, ".esp")) continue;
+            if ((e.kind != .sym_link and e.kind != .file) or
+                (!std.mem.endsWith(u8, e.name, ".esp") and
+                    !std.mem.endsWith(u8, e.name, ".esl") and
+                    !std.mem.endsWith(u8, e.name, ".esm"))) continue;
             try std.fmt.format(w, "*{s}\n", .{fs.path.basename(e.name)});
         }
     }
