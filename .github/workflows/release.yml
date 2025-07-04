@@ -1,0 +1,79 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+
+    steps:
+      - name: Install dependencies
+        run: |
+          pacman -Syyu --noconfirm --overwrite '*'
+          pacman -S --noconfirm base-devel git autoconf automake gettext pkgconf cmake
+          pacman -S --noconfirm --overwrite '*' po4a perl
+          which po4a
+
+      - name: Set up Git
+        run: |
+          git config --global user.email "cuentafrst@gmail.com"
+          git config --global user.name "Armando"
+
+      - name: Check out repository
+        uses: actions/checkout@v3
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Build libraries
+        env:
+          BASH_SOURCE: vendor/build.sh
+        run: |
+          chmod +x vendor/build.sh
+          vendor/build.sh
+
+      - name: Install Zig
+        run: |
+          curl -L https://ziglang.org/builds/zig-x86_64-linux-0.15.0-dev.905+edf785db0.tar.xz -o zig.tar.xz
+          tar -xf zig.tar.xz
+          sudo mv zig-x86_64-linux-0.15.0-dev.905+edf785db0 /opt/zig
+          sudo ln -s /opt/zig/zig /usr/local/bin/zig
+          zig version
+
+      - name: Build
+        run: |
+          zig build -freference-trace -Doptimize=ReleaseFast
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ github.run_number }}
+          release_name: TolMir Release Build#${{ github.run_number }}
+          draft: false
+          prerelease: false
+
+      - name: Upload binary to Release
+        id: upload_bin
+        uses: actions/upload-artifact@v4
+        with:
+          name: tolmir
+          path: zig-out/bin/tolmir
+
+      - name: Attach binary to Release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: zig-out/bin/tolmir
+          asset_name: tolmir
+          asset_content_type: application/octet-stream

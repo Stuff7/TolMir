@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 vendor="$PWD/$(dirname "$BASH_SOURCE")"
 
